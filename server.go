@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,13 @@ var regexSchema = map[string]string{
 	"read":    `^\d{2}-\d{2}-\d{4}$`,
 	"rating":  `^([1-9]|10)/10 - [А-Яа-яЁёA-Za-z0-9\s\,\.\!\?]{1,200}$`,
 }
+var (
+	fileMutex sync.Mutex
+)
+
+const (
+	FILENAME = "books"
+)
 
 func ValidateRegex(field, value string) error {
 	pattern, ok := regexSchema[field]
@@ -312,10 +320,6 @@ func displayCreateMenu() string {
 `
 }
 
-const (
-	FILENAME = "books"
-)
-
 func lineToDict(line string) (map[string]string, error) {
 	parts := strings.Split(strings.TrimSpace(line), "|")
 
@@ -526,7 +530,6 @@ func displayFilterMenu() string {
 `
 }
 
-// getField returns the value of the specified field from the Book struct
 func (b *Book) getField(field string) string {
 	switch field {
 	case "id":
@@ -558,7 +561,7 @@ func (b *Book) getField(field string) string {
 	}
 }
 
-// setField updates the specified field in the Book struct with validation
+// обновить поле
 func (b *Book) setField(field string, value string) error {
 	switch field {
 	case "id":
@@ -633,20 +636,20 @@ func (b *Book) setField(field string, value string) error {
 	return nil
 }
 
-// modifyBooksFile updates or deletes books in the file atomically
+// обновление - удаление и редактирование
 func modifyBooksFile(books []Book, update bool) string {
 
 	tempFilename := "temp_books.txt"
 	found := false
 	var result strings.Builder
 
-	// Create a map of books to update/delete for quick lookup
+	// книги для обновления/удаления
 	bookMap := make(map[string]Book)
 	for _, book := range books {
 		bookMap[book.ID] = book
 	}
 
-	// Open original file and temporary file
+	// открытие файлов
 	originalFile, err := os.Open(FILENAME)
 	if err != nil {
 		return fmt.Sprintf("Ошибка открытия файла: %v", err)
@@ -671,7 +674,7 @@ func modifyBooksFile(books []Book, update bool) string {
 		if bookToModify, exists := bookMap[bookID]; exists {
 			found = true
 			if update {
-				// Update the book
+				// обновление книги
 				newLine := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
 					bookToModify.ID,
 					bookToModify.Name,
@@ -691,12 +694,12 @@ func modifyBooksFile(books []Book, update bool) string {
 				}
 				result.WriteString(fmt.Sprintf("Обновлена книга: %s (ID: %s)\n", bookToModify.Name, bookToModify.ID))
 			}
-			// For delete, we just skip writing this line
+			// пропускаем строку
 			if !update {
 				result.WriteString(fmt.Sprintf("Удалена книга: %s (ID: %s)\n", bookData["name"], bookID))
 			}
 		} else {
-			// Write the original line for books not being modified
+			// записываем не найденные строки
 			if _, err := tempFile.WriteString(line + "\n"); err != nil {
 				return fmt.Sprintf("Ошибка записи во временный файл: %v", err)
 			}
@@ -712,7 +715,7 @@ func modifyBooksFile(books []Book, update bool) string {
 		return "Книги не найдены для изменения"
 	}
 
-	// Replace the original file with the temp file
+	// Заменим файл обратно
 	originalFile.Close()
 	if err := os.Remove(FILENAME); err != nil {
 		return fmt.Sprintf("Ошибка удаления оригинального файла: %v", err)
@@ -726,7 +729,7 @@ func modifyBooksFile(books []Book, update bool) string {
 func searchBooks(field, value string) ([]Book, error) {
 	var results []Book
 
-	// Check if file exists
+	// Проверим, существует ли файл
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return results, nil
 	}
@@ -847,13 +850,13 @@ func main() {
 	}
 }
 func Delete(bookIDs []string) string {
-	// Read all books
+	// Чтение
 	books, err := Read()
 	if err != nil {
 		return fmt.Sprintf("Ошибка при чтении книг: %v", err)
 	}
 
-	// Filter books to delete
+	// Фильтрация
 	var booksToDelete []Book
 	for _, book := range books {
 		for _, id := range bookIDs {
@@ -868,7 +871,7 @@ func Delete(bookIDs []string) string {
 		return "Книги не найдены для удаления"
 	}
 
-	// Show confirmation
+	// Подтверждение
 	var builder strings.Builder
 	builder.WriteString("Найдены книги для удаления:\n")
 	for _, book := range booksToDelete {
@@ -880,13 +883,13 @@ func Delete(bookIDs []string) string {
 }
 
 func Update(book Book) string {
-	// Read all books
+	// Чтение
 	books, err := Read()
 	if err != nil {
 		return fmt.Sprintf("Ошибка при чтении книг: %v", err)
 	}
 
-	// Find the book to update
+	// Найти книги для обновления
 	var found bool
 	for i, b := range books {
 		if b.ID == book.ID {
@@ -900,7 +903,7 @@ func Update(book Book) string {
 		return fmt.Sprintf("Книга с ID %s не найдена", book.ID)
 	}
 
-	// Write all books back to file
+	// Записать все книги в файл
 	tempFilename := "temp_books.txt"
 	tempFile, err := os.Create(tempFilename)
 	if err != nil {
@@ -928,7 +931,7 @@ func Update(book Book) string {
 		}
 	}
 
-	// Replace the original file
+	// Заменить файл на исходный
 	if err := os.Remove(FILENAME); err != nil {
 		return fmt.Sprintf("Ошибка удаления оригинального файла: %v", err)
 	}
@@ -1148,7 +1151,6 @@ ID: %s
 						confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
 						log.Printf("%s прислал: %s", remoteAddr, confirm)
 						if confirm == "д" || confirm == "y" {
-							// Here you would typically save the book to your storage
 							sendMessage("Добавление книги... ")
 							Create(book)
 							sendMessage("Книга добавлена. Отправьте '0' для просмотра меню")
@@ -1202,7 +1204,6 @@ ID: %s
 				case "0":
 					sendMessage(displaySearchMenu())
 				case "1":
-					// Search for books to update
 					sendMessage(displayFilterMenu())
 					var field, value string
 
@@ -1236,7 +1237,7 @@ ID: %s
 							field = fields[choice-1]
 							sendMessage(fmt.Sprintf("Введите значение для поиска по полю '%s':", field))
 
-							// Get search value with validation
+							// Получить значение поиска с валидацией
 							for scanner.Scan() {
 								value = strings.TrimSpace(scanner.Text())
 								if field == "id" || field == "width" || field == "height" {
@@ -1248,7 +1249,7 @@ ID: %s
 								break
 							}
 
-							// Search for books
+							// Поиск книг
 							books, err := searchBooks(field, value)
 							if err != nil {
 								sendMessage(fmt.Sprintf("Ошибка поиска: %v", err))
@@ -1290,20 +1291,19 @@ ID: %s
 					idsInput := strings.TrimSpace(scanner.Text())
 					bookIDs := strings.Split(idsInput, ",")
 
-					// Trim spaces from each ID
+					// Убрать пробелы
 					for i, id := range bookIDs {
 						bookIDs[i] = strings.TrimSpace(id)
 					}
 
-					// Show confirmation
+					// Запросить подтверждение
 					response := Delete(bookIDs)
 					sendMessage(response)
 
-					// Get confirmation
 					scanner.Scan()
 					confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
 					if confirm == "д" || confirm == "y" {
-						// Perform actual deletion
+						// Удалить
 						var booksToDelete []Book
 						allBooks, _ := Read()
 						for _, book := range allBooks {
@@ -1340,12 +1340,11 @@ ID: %s
 				case "0":
 					sendMessage(displayUpdateMenu())
 				case "1":
-					// First find the book to update
+					// Найти
 					sendMessage("Введите ID книги для обновления:")
 					scanner.Scan()
 					bookID := strings.TrimSpace(scanner.Text())
 
-					// Search for the book
 					books, err := searchBooks("id", bookID)
 					if err != nil || len(books) == 0 {
 						sendMessage("Книга не найдена")
@@ -1356,7 +1355,7 @@ ID: %s
 					sendMessage(fmt.Sprintf("Найдена книга: %s", book.Name))
 					sendMessage("Введите новые значения (оставьте пустым, чтобы не изменять)")
 
-					// Update each field
+					// Обновить каждое поле
 					fields := []struct {
 						name     string
 						prompt   string
@@ -1424,7 +1423,6 @@ ID: %s
 						}
 					}
 
-					// Show changes
 					sendMessage("Изменения:")
 					sendMessage(fmt.Sprintf(`
 ID: %s
