@@ -268,7 +268,7 @@ func appendBookToFile(book Book) error {
 	return nil
 }
 
-const port = ":8080"
+const port = ":5000"
 
 type Book struct {
 	ID      string
@@ -983,12 +983,14 @@ func handleClient(conn net.Conn) {
 				case "1":
 					var book Book
 					var err error
+					var input string
 					// Name
 					sendMessage("Введите название книги:")
 					for scanner.Scan() {
-						book.Name = strings.TrimSpace(scanner.Text())
+						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, book.Name)
-						if err = ValidateName(book.Name); err == nil {
+						if err = ValidateName(input); err == nil {
+							book.Name = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -998,7 +1000,7 @@ func handleClient(conn net.Conn) {
 					// Authors
 					sendMessage("Введите авторов (через запятую):")
 					for scanner.Scan() {
-						input := strings.TrimSpace(scanner.Text())
+						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, input)
 						normalized, err := ValidateAuthors(input)
 						if err == nil {
@@ -1012,7 +1014,7 @@ func handleClient(conn net.Conn) {
 					// Genres
 					sendMessage("Введите жанры (через запятую):")
 					for scanner.Scan() {
-						input := strings.TrimSpace(scanner.Text())
+						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, input)
 						normalized, err := ValidateGenres(input)
 						if err == nil {
@@ -1026,9 +1028,10 @@ func handleClient(conn net.Conn) {
 					// Year
 					sendMessage("Введите год издания:")
 					for scanner.Scan() {
-						book.Year = strings.TrimSpace(scanner.Text())
+						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, book.Year)
-						if err = ValidateYear(book.Year); err == nil {
+						if err = ValidateYear(input); err == nil {
+							book.Year = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -1038,9 +1041,10 @@ func handleClient(conn net.Conn) {
 					// Width
 					sendMessage("Введите ширину книги (мм):")
 					for scanner.Scan() {
-						book.Width = strings.TrimSpace(scanner.Text())
+						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, book.Width)
-						if err = ValidateHeightWidth(book.Width, "width"); err == nil {
+						if err = ValidateHeightWidth(input, "width"); err == nil {
+							book.Width = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -1050,9 +1054,10 @@ func handleClient(conn net.Conn) {
 					// Height
 					sendMessage("Введите высоту книги (мм):")
 					for scanner.Scan() {
-						book.Height = strings.TrimSpace(scanner.Text())
-						log.Printf("%s прислал: %s", remoteAddr, book.Height)
-						if err = ValidateHeightWidth(book.Height, "height"); err == nil {
+						input = strings.TrimSpace(scanner.Text())
+						log.Printf("%s прислал: %s", remoteAddr, input)
+						if err = ValidateHeightWidth(input, "height"); err == nil {
+							book.Width = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -1062,9 +1067,10 @@ func handleClient(conn net.Conn) {
 					// Book Type
 					sendMessage("Введите тип обложки (мягкий/твердый):")
 					for scanner.Scan() {
-						book.Cover = strings.TrimSpace(scanner.Text())
-						log.Printf("%s прислал: %s", remoteAddr, book.Cover)
-						if err = ValidateCover(book.Cover); err == nil {
+						input = strings.TrimSpace(scanner.Text())
+						log.Printf("%s прислал: %s", remoteAddr, input)
+						if err = ValidateCover(input); err == nil {
+							book.Cover = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -1074,9 +1080,10 @@ func handleClient(conn net.Conn) {
 					// Source
 					sendMessage("Введите источник (покупка/подарок/наследство):")
 					for scanner.Scan() {
-						book.Source = strings.TrimSpace(scanner.Text())
-						log.Printf("%s прислал: %s", remoteAddr, book.Source)
-						if err = ValidateSource(book.Source); err == nil {
+						input = strings.TrimSpace(scanner.Text())
+						log.Printf("%s прислал: %s", remoteAddr, input)
+						if err = ValidateSource(input); err == nil {
+							book.Source = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -1086,9 +1093,10 @@ func handleClient(conn net.Conn) {
 					// Date Added
 					sendMessage("Введите дату добавления (ДД-ММ-ГГГГ):")
 					for scanner.Scan() {
-						book.Added = strings.TrimSpace(scanner.Text())
-						log.Printf("%s прислал: %s", remoteAddr, book.Added)
-						if err = ValidateAdded(book.Added, book.Year); err == nil {
+						input = strings.TrimSpace(scanner.Text())
+						log.Printf("%s прислал: %s", remoteAddr, input)
+						if err = ValidateAdded(input, book.Year); err == nil {
+							book.Added = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -1098,13 +1106,14 @@ func handleClient(conn net.Conn) {
 					// Date Read
 					sendMessage("Введите дату прочтения (ДД-ММ-ГГГГ) или оставьте пустым:")
 					for scanner.Scan() {
-						input := strings.TrimSpace(scanner.Text())
+						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, input)
 						if input == "" {
 							break
 						}
-						book.Read = input
-						if err = ValidateRead(book.Read, book.Added); err == nil {
+
+						if err = ValidateRead(input, book.Added); err == nil {
+							book.Read = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
@@ -1114,13 +1123,14 @@ func handleClient(conn net.Conn) {
 					// Rating
 					sendMessage("Введите рейтинг (X/10 - комментарий) или оставьте пустым:")
 					for scanner.Scan() {
-						input := strings.TrimSpace(scanner.Text())
+						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, input)
 						if input == "" {
 							break
 						}
-						book.Rating = input
-						if err = ValidateRating(book.Rating); err == nil {
+
+						if err = ValidateRating(input); err == nil {
+							book.Rating = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
