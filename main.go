@@ -242,8 +242,19 @@ func isUniqueBook(book Book) (bool, error) {
 }
 
 func appendBookToFile(book Book) error {
-	token <- struct{}{}        // Отправляем значение в канал (захватываем токен)
-	defer func() { <-token }() // Освобождаем токен при завершении
+	// Захватываем токен (блокируем доступ для других горутин)
+	token <- struct{}{}
+	log.Printf("Начало записи книги ID %s (блокировка установлена)", book.ID)
+
+	// Искусственная задержка для демонстрации блокировки
+	time.Sleep(3 * time.Second)
+
+	// Гарантируем освобождение токена при завершении
+	defer func() {
+		<-token
+		log.Printf("Завершение записи книги ID %s (блокировка снята)", book.ID)
+	}()
+	// Освобождаем токен при завершении
 	file, err := os.OpenFile(FILENAME, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("ошибка открытия файла: %v", err)
@@ -391,28 +402,33 @@ func getNextID() (int, error) {
 }
 
 func Create(book Book) string {
+	log.Printf("Попытка создания книги ID %s", book.ID)
 
 	// следующий ID
 	bookID, err := getNextID()
 	if err != nil {
+		log.Printf("Ошибка получения ID: %v", err)
 		return fmt.Sprintf("Ошибка при получении ID: %v", err)
 	}
 	book.ID = strconv.Itoa(bookID)
 
 	// Проверка на уникальность
 	if isUnique, err := isUniqueBook(book); err != nil {
+		log.Printf("Ошибка проверки уникальности: %v", err)
 		return fmt.Sprintf("Ошибка проверки уникальности: %v", err)
 	} else if !isUnique {
+		log.Printf("Книга уже существует: %s, %s", book.Name, book.Authors)
 		return fmt.Sprintf("Книга уже добавлена: %s, написанная %s", book.Name, book.Authors)
 	}
 
 	// Добавить в файл
 	if err := appendBookToFile(book); err != nil {
+		log.Printf("Ошибка записи книги: %v", err)
 		return fmt.Sprintf("Ошибка при записи в файл: %v", err)
 	}
 
+	log.Printf("Книга успешно создана: %s (ID: %d)", book.Name, bookID)
 	return fmt.Sprintf("Добавлена книга: %s (ID: %d)", book.Name, bookID)
-
 }
 func Read() ([]Book, error) {
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
@@ -1148,12 +1164,13 @@ ID: %s
 					sendMessage("Добавить книгу? (д/н):")
 					for scanner.Scan() {
 						confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
-						log.Printf("%s прислал: %s", remoteAddr, confirm)
+						log.Printf("%s подтверждение: %s", remoteAddr, confirm)
 						if confirm == "д" || confirm == "y" {
-							// Here you would typically save the book to your storage
 							sendMessage("Добавление книги... ")
-							Create(book)
-							sendMessage("Книга добавлена. Отправьте '0' для просмотра меню")
+							log.Printf("Клиент %s начинает добавление книги", remoteAddr)
+							result := Create(book)
+							sendMessage(result)
+							log.Printf("Клиент %s завершил добавление книги", remoteAddr)
 							break
 						} else if confirm == "н" || confirm == "n" {
 							sendMessage("Добавление отменено. Отправьте '0' для просмотра меню")
