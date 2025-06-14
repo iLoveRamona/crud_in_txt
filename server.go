@@ -14,6 +14,123 @@ import (
 	"time"
 )
 
+const port = ":5000"
+const FILENAME = "books"
+
+var (
+	fileMutex sync.Mutex
+)
+
+type Book struct {
+	ID      string
+	Name    string
+	Authors string
+	Genres  string
+	Year    string
+	Width   string
+	Height  string
+	Cover   string
+	Source  string
+	Added   string
+	Read    string
+	Rating  string
+}
+
+func displayMenu() string {
+	return `
+ -------------------
+| Выберите действие |
+ -------------------
+0 - Меню
+1 - Create
+2 - Read
+3 - Search
+4 - Delete
+5 - Update
+exit - Выйти
+`
+}
+
+func displayCreateMenu() string {
+	return `
+ ------------------
+| Добавление книги |
+ ------------------
+1/
+|---- 0 - Меню
+|---- 1 - Ввести книгу
+|---- exit - Назад
+`
+}
+func displayReadMenu() string {
+	return `
+ ---------------
+| Просмотр книг |
+ ---------------
+2/
+|---- 0 - Меню
+|---- 1 - Вывести книги
+|---- exit -  Назад
+`
+}
+func displaySearchMenu() string {
+	return `
+ ---------------
+| Просмотр книг |
+ ---------------
+3/
+|---- 0 - Меню
+|---- 1 - Найти книги
+|---- exit -  Назад
+`
+}
+func displayDeleteMenu() string {
+	return `
+---------------
+| Удалить книги |
+ ---------------
+4/
+|---- 0 - Меню
+|---- 1 - Удалить книги
+|---- exit -  Назад
+`
+}
+
+func displayUpdateMenu() string {
+	return `
+ ---------------
+| Обновить книги |
+ ---------------
+5/
+|---- 0 - Меню
+|---- 1 - Обновить книги
+|---- exit -  Назад
+`
+}
+
+func displayFilterMenu() string {
+	return `
+ -------------
+| Найти книги |
+ -------------
+---- */
+|---- ---- 0 - Меню
+|---- ---- 1 - По полю 'id'
+|---- ---- 2 - По полю 'name'
+|---- ---- 3 - По полю 'year'
+|---- ---- 4 - По полю 'authors'
+|---- ---- 5 - По полю 'genres'
+|---- ---- 6 - По полю 'width'
+|---- ---- 7 - По полю 'height'
+|---- ---- 8 - По полю 'cover'
+|---- ---- 9 - По полю 'source'
+|---- ---- 10 - По полю 'added'
+|---- ---- 11 - По полю 'read'
+|---- ---- 12 - По полю 'rating'
+|---- ---- exit -  Назад
+`
+}
+
 var regexSchema = map[string]string{
 	"name":    `^[А-Яа-яЁёA-Za-z0-9\s]{1,100}$`,
 	"authors": `^[А-Яа-яЁёA-Za-z\s,]{1,130}$`,
@@ -27,14 +144,8 @@ var regexSchema = map[string]string{
 	"read":    `^\d{2}-\d{2}-\d{4}$`,
 	"rating":  `^([1-9]|10)/10 - [А-Яа-яЁёA-Za-z0-9\s\,\.\!\?]{1,200}$`,
 }
-var (
-	fileMutex sync.Mutex
-)
 
-const (
-	FILENAME = "books"
-)
-
+// ValidateRegex - валидация данных по регулярке
 func ValidateRegex(field, value string) error {
 	pattern, ok := regexSchema[field]
 	if !ok {
@@ -48,6 +159,59 @@ func ValidateRegex(field, value string) error {
 	return nil
 }
 
+// ValidateName - валидация названия книги
+func ValidateName(name string) error {
+	if strings.Contains(name, "  ") {
+		return fmt.Errorf("название не должно содержать двойных пробелов")
+	}
+
+	if err := ValidateRegex("name", name); err != nil {
+		return fmt.Errorf("название может содержать только буквы, цифры и пробелы")
+	}
+
+	if len(name) < 1 || len(name) > 100 {
+		return fmt.Errorf("название должно быть от 1 до 100 символов")
+	}
+
+	return nil
+}
+
+// normalizeCommas - убрать пробелы между запятой в полях `genres` и  `authors`
+func normalizeCommas(input string) string {
+	// Заменяем " , " или любые пробелы вокруг запятых на ","
+	re := regexp.MustCompile(`\s*,\s*`)
+	return re.ReplaceAllString(input, ",")
+}
+
+// ValidateAuthors - проверить
+func ValidateAuthors(authors string) (string, error) {
+	normalized := normalizeCommas(authors)
+	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
+		return "", fmt.Errorf("авторы не должны содержать двойных пробелов или запятых")
+	}
+
+	if err := ValidateRegex("authors", normalized); err != nil {
+		return "", fmt.Errorf("авторы могут содержать только буквы, пробелы и запятые")
+	}
+
+	return normalized, nil
+}
+
+// ValidateGenres - валидация набора жанров книги
+func ValidateGenres(genres string) (string, error) {
+	normalized := normalizeCommas(genres)
+	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
+		return "", fmt.Errorf("жанры не должны содержать двойных пробелов или запятых")
+	}
+
+	if err := ValidateRegex("genres", normalized); err != nil {
+		return "", fmt.Errorf("жанры могут содержать только буквы, пробелы и запятые")
+	}
+
+	return normalized, nil
+}
+
+// ValidateYear - валидация даты издания книги
 func ValidateYear(year string) error {
 	if err := ValidateRegex("year", year); err != nil {
 		return err
@@ -68,6 +232,7 @@ func ValidateYear(year string) error {
 	return nil
 }
 
+// ValidateHeightWidth - валидация ширины и высоты книги
 func ValidateHeightWidth(value, heightOrWidth string) error {
 	field := "width"
 	if heightOrWidth == "height" {
@@ -92,6 +257,23 @@ func ValidateHeightWidth(value, heightOrWidth string) error {
 	return nil
 }
 
+// ValidateCover - валидация типа переплета
+func ValidateCover(bookType string) error {
+	if err := ValidateRegex("cover", bookType); err != nil {
+		return fmt.Errorf("тип обложки должен быть 'мягкий' или 'твердый'")
+	}
+	return nil
+}
+
+// ValidateSource - валидация источника получения книги
+func ValidateSource(source string) error {
+	if err := ValidateRegex("source", source); err != nil {
+		return fmt.Errorf("источник должен быть: 'покупка', 'подарок' или 'наследство'")
+	}
+	return nil
+}
+
+// ValidateAdded - валидация даты добавления книги в библиотеку
 func ValidateAdded(added, year string) error {
 	if err := ValidateRegex("added", added); err != nil {
 		return err
@@ -116,6 +298,7 @@ func ValidateAdded(added, year string) error {
 	return nil
 }
 
+// ValidateRead - валидация даты прочтения книги
 func ValidateRead(read, added string) error {
 	if read == "" {
 		return nil
@@ -141,6 +324,7 @@ func ValidateRead(read, added string) error {
 	return nil
 }
 
+// ValidateRating - валидация отзыва о книге
 func ValidateRating(rating string) error {
 	if rating == "" {
 		return nil
@@ -151,67 +335,7 @@ func ValidateRating(rating string) error {
 	return nil
 }
 
-func ValidateCover(bookType string) error {
-	if err := ValidateRegex("cover", bookType); err != nil {
-		return fmt.Errorf("тип обложки должен быть 'мягкий' или 'твердый'")
-	}
-	return nil
-}
-
-func ValidateSource(source string) error {
-	if err := ValidateRegex("source", source); err != nil {
-		return fmt.Errorf("источник должен быть: 'покупка', 'подарок' или 'наследство'")
-	}
-	return nil
-}
-
-func ValidateName(name string) error {
-	if strings.Contains(name, "  ") {
-		return fmt.Errorf("название не должно содержать двойных пробелов")
-	}
-
-	if err := ValidateRegex("name", name); err != nil {
-		return fmt.Errorf("название может содержать только буквы, цифры и пробелы")
-	}
-
-	if len(name) < 1 || len(name) > 100 {
-		return fmt.Errorf("название должно быть от 1 до 100 символов")
-	}
-
-	return nil
-}
-func normalizeCommas(input string) string {
-	// Заменяем " , " или любые пробелы вокруг запятых на ", "
-	re := regexp.MustCompile(`\s*,\s*`)
-	return re.ReplaceAllString(input, ",")
-}
-
-func ValidateAuthors(authors string) (string, error) {
-	normalized := normalizeCommas(authors)
-	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
-		return "", fmt.Errorf("авторы не должны содержать двойных пробелов или запятых")
-	}
-
-	if err := ValidateRegex("authors", normalized); err != nil {
-		return "", fmt.Errorf("авторы могут содержать только буквы, пробелы и запятые")
-	}
-
-	return normalized, nil
-}
-
-func ValidateGenres(genres string) (string, error) {
-	normalized := normalizeCommas(genres)
-	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
-		return "", fmt.Errorf("жанры не должны содержать двойных пробелов или запятых")
-	}
-
-	if err := ValidateRegex("genres", normalized); err != nil {
-		return "", fmt.Errorf("жанры могут содержать только буквы, пробелы и запятые")
-	}
-
-	return normalized, nil
-}
-
+// CREATE
 func isUniqueBook(book Book) (bool, error) {
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return true, nil // файла не существует
@@ -274,50 +398,6 @@ func appendBookToFile(book Book) error {
 	}
 
 	return nil
-}
-
-const port = ":5000"
-
-type Book struct {
-	ID      string
-	Name    string
-	Authors string
-	Genres  string
-	Year    string
-	Width   string
-	Height  string
-	Cover   string
-	Source  string
-	Added   string
-	Read    string
-	Rating  string
-}
-
-func displayMenu() string {
-	return `
- -------------------
-| Выберите действие |
- -------------------
-0 - Меню
-1 - Create
-2 - Read
-3 - Search
-4 - Delete
-5 - Update
-exit - Выйти
-`
-}
-
-func displayCreateMenu() string {
-	return `
- ------------------
-| Добавление книги |
- ------------------
-1/
-|---- 0 - Меню
-|---- 1 - Ввести книгу
-|---- exit - Назад
-`
 }
 
 func lineToDict(line string) (map[string]string, error) {
@@ -413,6 +493,9 @@ func Create(book Book) string {
 	return fmt.Sprintf("Добавлена книга: %s (ID: %d)", book.Name, bookID)
 
 }
+
+// READ
+
 func Read() ([]Book, error) {
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return nil, nil // Файла нет - возвращаем пустой список
@@ -485,51 +568,8 @@ func formatBookList(books []Book) string {
 	return builder.String()
 
 }
-func displayReadMenu() string {
-	return `
- ---------------
-| Просмотр книг |
- ---------------
-2/
-|---- 0 - Меню
-|---- 1 - Вывести книги
-|---- exit -  Назад
-`
-}
-func displaySearchMenu() string {
-	return `
- ---------------
-| Просмотр книг |
- ---------------
-3/
-|---- 0 - Меню
-|---- 1 - Найти книги
-|---- exit -  Назад
-`
-}
-func displayFilterMenu() string {
-	return `
- -------------
-| Найти книги |
- -------------
----- */
-|---- ---- 0 - Меню
-|---- ---- 1 - По полю 'id'
-|---- ---- 2 - По полю 'name'
-|---- ---- 3 - По полю 'year'
-|---- ---- 4 - По полю 'authors'
-|---- ---- 5 - По полю 'genres'
-|---- ---- 6 - По полю 'width'
-|---- ---- 7 - По полю 'height'
-|---- ---- 8 - По полю 'cover'
-|---- ---- 9 - По полю 'source'
-|---- ---- 10 - По полю 'added'
-|---- ---- 11 - По полю 'read'
-|---- ---- 12 - По полю 'rating'
-|---- ---- exit -  Назад
-`
-}
 
+// UPDATE & DELETE
 func (b *Book) getField(field string) string {
 	switch field {
 	case "id":
@@ -561,7 +601,7 @@ func (b *Book) getField(field string) string {
 	}
 }
 
-// обновить поле
+// Обновить поле
 func (b *Book) setField(field string, value string) error {
 	switch field {
 	case "id":
@@ -636,7 +676,7 @@ func (b *Book) setField(field string, value string) error {
 	return nil
 }
 
-// обновление - удаление и редактирование
+// Обновление - удаление и редактирование
 func modifyBooksFile(books []Book, update bool) string {
 
 	tempFilename := "temp_books.txt"
@@ -726,6 +766,8 @@ func modifyBooksFile(books []Book, update bool) string {
 
 	return result.String()
 }
+
+// SEARCH
 func searchBooks(field, value string) ([]Book, error) {
 	var results []Book
 
@@ -807,29 +849,6 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
-}
-func displayUpdateMenu() string {
-	return `
- ---------------
-| Обновить книги |
- ---------------
-5/
-|---- 0 - Меню
-|---- 1 - Обновить книги
-|---- exit -  Назад
-`
-}
-
-func displayDeleteMenu() string {
-	return `
----------------
-| Удалить книги |
- ---------------
-4/
-|---- 0 - Меню
-|---- 1 - Удалить книги
-|---- exit -  Назад
-`
 }
 
 func main() {
