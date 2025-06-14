@@ -980,7 +980,7 @@ func handleClient(conn net.Conn) {
 					sendMessage("Введите название книги:")
 					for scanner.Scan() {
 						input = strings.TrimSpace(scanner.Text())
-						log.Printf("%s прислал: %s", remoteAddr, book.Name)
+						log.Printf("%s прислал: %s", remoteAddr, input)
 						if err = ValidateName(input); err == nil {
 							book.Name = input
 							break
@@ -1021,7 +1021,7 @@ func handleClient(conn net.Conn) {
 					sendMessage("Введите год издания:")
 					for scanner.Scan() {
 						input = strings.TrimSpace(scanner.Text())
-						log.Printf("%s прислал: %s", remoteAddr, book.Year)
+						log.Printf("%s прислал: %s", remoteAddr, input)
 						if err = ValidateYear(input); err == nil {
 							book.Year = input
 							break
@@ -1034,7 +1034,7 @@ func handleClient(conn net.Conn) {
 					sendMessage("Введите ширину книги (мм):")
 					for scanner.Scan() {
 						input = strings.TrimSpace(scanner.Text())
-						log.Printf("%s прислал: %s", remoteAddr, book.Width)
+						log.Printf("%s прислал: %s", input)
 						if err = ValidateHeightWidth(input, "width"); err == nil {
 							book.Width = input
 							break
@@ -1049,7 +1049,7 @@ func handleClient(conn net.Conn) {
 						input = strings.TrimSpace(scanner.Text())
 						log.Printf("%s прислал: %s", remoteAddr, input)
 						if err = ValidateHeightWidth(input, "height"); err == nil {
-							book.Width = input
+							book.Height = input
 							break
 						}
 						sendMessage("Неверный ввод: " + err.Error())
