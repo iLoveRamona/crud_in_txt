@@ -355,6 +355,14 @@ func lineToDict(line string) (map[string]string, error) {
 	}, nil
 }
 func getNextID() (int, error) {
+	token <- struct{}{}
+	// Искусственная задержка для демонстрации блокировки
+	time.Sleep(3 * time.Second)
+
+	// Гарантируем освобождение токена при завершении
+	defer func() {
+		<-token
+	}()
 	// если файл существует
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return 1, nil
