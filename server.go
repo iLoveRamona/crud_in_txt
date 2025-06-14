@@ -306,7 +306,7 @@ func appendBookToFile(book Book) error {
 	}
 	defer file.Close()
 
-	line := fmt.Sprintf("%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+	line := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
 		book.ID,
 		book.Name,
 		book.Year,
@@ -331,7 +331,7 @@ func appendBookToFile(book Book) error {
 const port = ":8080"
 
 type Book struct {
-	ID      int
+	ID      string
 	Name    string
 	Authors string
 	Genres  string
@@ -456,7 +456,7 @@ func Create(book Book) string {
 	if err != nil {
 		return fmt.Sprintf("Ошибка при получении ID: %v", err)
 	}
-	book.ID = bookID
+	book.ID = strconv.Itoa(bookID)
 
 	// Проверка на уникальность
 	if isUnique, err := isUniqueBook(book); err != nil {
@@ -471,6 +471,78 @@ func Create(book Book) string {
 	}
 
 	return fmt.Sprintf("Добавлена книга: %s (ID: %d)", book.Name, bookID)
+
+}
+func Read() ([]Book, error) {
+	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
+		return nil, nil // Файла нет - возвращаем пустой список
+	}
+
+	file, err := os.Open(FILENAME)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка открытия файла: %v", err)
+	}
+	defer file.Close()
+
+	var books []Book
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		bookMap, err := lineToDict(line)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка парсинга строки: %v", err)
+		}
+
+		book := Book{
+			ID:      bookMap["id"],
+			Name:    bookMap["name"],
+			Year:    bookMap["year"],
+			Authors: bookMap["authors"],
+			Genres:  bookMap["genres"],
+			Width:   bookMap["width"],
+			Height:  bookMap["height"],
+			Cover:   bookMap["book_type"],
+			Source:  bookMap["source"],
+			Added:   bookMap["date_added"],
+			Read:    bookMap["date_read"],
+			Rating:  bookMap["rating"],
+		}
+		books = append(books, book)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения файла: %v", err)
+	}
+
+	return books, nil
+}
+
+func formatBookList(books []Book) string {
+	if len(books) == 0 {
+		return "Список книг пуст"
+	}
+
+	var builder strings.Builder
+	builder.WriteString("\nСписок книг:\n")
+	builder.WriteString(strings.Repeat("-", 50) + "\n")
+
+	for _, book := range books {
+		builder.WriteString(fmt.Sprintf(
+			"ID: %s\nНазвание: %s\nАвторы: %s\nГод: %s\nЖанры: %s\n"+
+				"Размер: %sx%s мм\nТип обложки: %s\nИсточник: %s\n"+
+				"Добавлена: %s\nПрочитана: %s\nРейтинг: %s\n"+
+				strings.Repeat("-", 50)+"\n",
+			book.ID, book.Name, book.Authors, book.Year, book.Genres,
+			book.Width, book.Height, book.Cover, book.Source,
+			book.Added, book.Read, book.Rating))
+	}
+
+	builder.WriteString(fmt.Sprintf("Всего книг: %d\n", len(books)))
+	return builder.String()
 
 }
 func displayReadMenu() string {
@@ -739,10 +811,10 @@ func handleClient(conn net.Conn) {
 						sendMessage("Введите рейтинг (X/10 - комментарий) или оставьте пустым:")
 					}
 
-					// Confirm addition
+					// Подтвердить добавление
 
 					sendMessage(fmt.Sprintf(`
-ID: %d
+ID: %s
 Название: %s
 Авторы: %s
 Жанры: %s
@@ -763,10 +835,10 @@ ID: %d
 							// Here you would typically save the book to your storage
 							sendMessage("Добавление книги... ")
 							Create(book)
-							sendMessage("Книга добавлена. Отправьте '0' для возвращения в меню")
+							sendMessage("Книга добавлена. Отправьте '0' для просмотра меню")
 							break
 						} else if confirm == "н" || confirm == "n" {
-							sendMessage("Добавление отменено. Отправьте '0' для возвращения в меню")
+							sendMessage("Добавление отменено. Отправьте '0' для просмотра меню")
 							break
 						}
 					}
@@ -789,7 +861,14 @@ ID: %d
 					sendMessage(displayReadMenu())
 				case "1":
 					sendMessage("Вывод всех книг...")
-					sendMessage("Книги выведены. Отправьте '0' для возвращения в меню")
+					books, err := Read()
+					if err != nil {
+						sendMessage("Ошибка при чтении списка книг: " + err.Error())
+					} else {
+						sendMessage("Вывод всех книг...")
+						sendMessage(formatBookList(books))
+					}
+					sendMessage("Книги выведены. Отправьте '0' для просмотра меню")
 				default:
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
@@ -809,7 +888,7 @@ ID: %d
 					sendMessage(displayUpdateMenu())
 				case "1":
 					sendMessage("Обновление книг...")
-					sendMessage("Книги обновлены. Отправьте '0' для возвращения в меню")
+					sendMessage("Книги обновлены. Отправьте '0' для просмотра меню")
 				default:
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
@@ -829,7 +908,7 @@ ID: %d
 					sendMessage(displayDeleteMenu())
 				case "1":
 					sendMessage("Удаление книг...")
-					sendMessage("Книги удалены. Отправьте '0' для возвращения в меню")
+					sendMessage("Книги удалены. Отправьте '0' для просмотра меню")
 				default:
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
