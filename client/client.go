@@ -38,6 +38,30 @@ func main() {
 
 		addTestBook(conn, "Клиент 2")
 	}()
+	// Клиент 3
+	go func() {
+		defer wg.Done()
+		conn, err := net.Dial("tcp", "localhost:5000")
+		if err != nil {
+			fmt.Printf("Клиент 3: ошибка подключения: %v\n", err)
+			return
+		}
+		defer conn.Close()
+
+		addTestBook(conn, "Клиент 3")
+	}()
+	// Клиент 4
+	go func() {
+		defer wg.Done()
+		conn, err := net.Dial("tcp", "localhost:5000")
+		if err != nil {
+			fmt.Printf("Клиент 4: ошибка подключения: %v\n", err)
+			return
+		}
+		defer conn.Close()
+
+		addTestBook(conn, "Клиент 4")
+	}()
 
 	wg.Wait()
 	fmt.Println("Оба клиента завершили работу")

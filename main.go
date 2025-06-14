@@ -242,19 +242,7 @@ func isUniqueBook(book Book) (bool, error) {
 }
 
 func appendBookToFile(book Book) error {
-	// Захватываем токен (блокируем доступ для других горутин)
-	token <- struct{}{}
-	log.Printf("Начало записи книги ID %s (блокировка установлена)", book.ID)
 
-	// Искусственная задержка для демонстрации блокировки
-	time.Sleep(3 * time.Second)
-
-	// Гарантируем освобождение токена при завершении
-	defer func() {
-		<-token
-		log.Printf("Завершение записи книги ID %s (блокировка снята)", book.ID)
-	}()
-	// Освобождаем токен при завершении
 	file, err := os.OpenFile(FILENAME, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("ошибка открытия файла: %v", err)
@@ -355,14 +343,7 @@ func lineToDict(line string) (map[string]string, error) {
 	}, nil
 }
 func getNextID() (int, error) {
-	token <- struct{}{}
-	// Искусственная задержка для демонстрации блокировки
-	time.Sleep(3 * time.Second)
 
-	// Гарантируем освобождение токена при завершении
-	defer func() {
-		<-token
-	}()
 	// если файл существует
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return 1, nil
@@ -410,16 +391,22 @@ func getNextID() (int, error) {
 }
 
 func Create(book Book) string {
-	log.Printf("Попытка создания книги ID %s", book.ID)
+	token <- struct{}{}
+	// Искусственная задержка для демонстрации блокировки
+	time.Sleep(3 * time.Second)
+
+	// Гарантируем освобождение токена при завершении
+	defer func() { <-token }()
 
 	// следующий ID
 	bookID, err := getNextID()
+
 	if err != nil {
 		log.Printf("Ошибка получения ID: %v", err)
 		return fmt.Sprintf("Ошибка при получении ID: %v", err)
 	}
 	book.ID = strconv.Itoa(bookID)
-
+	log.Printf("Попытка создания книги ID %s", book.ID)
 	// Проверка на уникальность
 	if isUnique, err := isUniqueBook(book); err != nil {
 		log.Printf("Ошибка проверки уникальности: %v", err)
@@ -438,6 +425,7 @@ func Create(book Book) string {
 	log.Printf("Книга успешно создана: %s (ID: %d)", book.Name, bookID)
 	return fmt.Sprintf("Добавлена книга: %s (ID: %d)", book.Name, bookID)
 }
+
 func Read() ([]Book, error) {
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return nil, nil // Файла нет - возвращаем пустой список
