@@ -353,8 +353,9 @@ func displayMenu() string {
 0 - Меню
 1 - Create
 2 - Read
-3 - Update
+3 - Search
 4 - Delete
+5 - Update
 exit - Выйти
 `
 }
@@ -556,7 +557,17 @@ func displayReadMenu() string {
 |---- exit -  Назад
 `
 }
-
+func displaySearchMenu() string {
+	return `
+ ---------------
+| Просмотр книг |
+ ---------------
+3/
+|---- 0 - Меню
+|---- 1 - Найти книги
+|---- exit -  Назад
+`
+}
 func displayFilterMenu() string {
 	return `
  -------------
@@ -579,7 +590,313 @@ func displayFilterMenu() string {
 |---- ---- exit -  Назад
 `
 }
+func chooseFieldMenu() string {
+	return `
+ -------------
+---- */
+|---- ---- 1 - По полю 'id'
+|---- ---- 2 - По полю 'name'
+|---- ---- 3 - По полю 'year'
+|---- ---- 4 - По полю 'authors'
+|---- ---- 5 - По полю 'genres'
+|---- ---- 6 - По полю 'width'
+|---- ---- 7 - По полю 'height'
+|---- ---- 8 - По полю 'cover'
+|---- ---- 9 - По полю 'source'
+|---- ---- 10 - По полю 'added'
+|---- ---- 11 - По полю 'read'
+|---- ---- 12 - По полю 'rating'
+`
+}
 
+// getField returns the value of the specified field from the Book struct
+func (b *Book) getField(field string) string {
+	switch field {
+	case "id":
+		return b.ID
+	case "name":
+		return b.Name
+	case "year":
+		return b.Year
+	case "authors":
+		return b.Authors
+	case "genres":
+		return b.Genres
+	case "width":
+		return b.Width
+	case "height":
+		return b.Height
+	case "cover":
+		return b.Cover
+	case "source":
+		return b.Source
+	case "added":
+		return b.Added
+	case "read":
+		return b.Read
+	case "rating":
+		return b.Rating
+	default:
+		return ""
+	}
+}
+
+// setField updates the specified field in the Book struct with validation
+func (b *Book) setField(field string, value string) error {
+	switch field {
+	case "id":
+		if _, err := strconv.Atoi(value); err != nil {
+			return fmt.Errorf("ID должен быть числом")
+		}
+		b.ID = value
+	case "name":
+		if err := ValidateName(value); err != nil {
+			return err
+		}
+		b.Name = value
+	case "year":
+		if err := ValidateYear(value); err != nil {
+			return err
+		}
+		b.Year = value
+	case "authors":
+		normalized, err := ValidateAuthors(value)
+		if err != nil {
+			return err
+		}
+		b.Authors = normalized
+	case "genres":
+		normalized, err := ValidateGenres(value)
+		if err != nil {
+			return err
+		}
+		b.Genres = normalized
+	case "width":
+		if err := ValidateHeightWidth(value, "width"); err != nil {
+			return err
+		}
+		b.Width = value
+	case "height":
+		if err := ValidateHeightWidth(value, "height"); err != nil {
+			return err
+		}
+		b.Height = value
+	case "cover":
+		if err := ValidateCover(value); err != nil {
+			return err
+		}
+		b.Cover = value
+	case "source":
+		if err := ValidateSource(value); err != nil {
+			return err
+		}
+		b.Source = value
+	case "added":
+		if err := ValidateAdded(value, b.Year); err != nil {
+			return err
+		}
+		b.Added = value
+	case "read":
+		if value != "" {
+			if err := ValidateRead(value, b.Added); err != nil {
+				return err
+			}
+		}
+		b.Read = value
+	case "rating":
+		if value != "" {
+			if err := ValidateRating(value); err != nil {
+				return err
+			}
+		}
+		b.Rating = value
+	default:
+		return fmt.Errorf("неизвестное поле: %s", field)
+	}
+	return nil
+}
+
+// modifyBooksFile updates or deletes books in the file atomically
+func modifyBooksFile(books []Book, update bool) string {
+	// Create backup first
+	if err := createBackup(); err != nil {
+		return fmt.Sprintf("Ошибка при создании бэкапа: %v", err)
+	}
+
+	tempFilename := "temp_books.txt"
+	found := false
+	var result strings.Builder
+
+	// Create a map of books to update/delete for quick lookup
+	bookMap := make(map[string]Book)
+	for _, book := range books {
+		bookMap[book.ID] = book
+	}
+
+	// Open original file and temporary file
+	originalFile, err := os.Open(FILENAME)
+	if err != nil {
+		return fmt.Sprintf("Ошибка открытия файла: %v", err)
+	}
+	defer originalFile.Close()
+
+	tempFile, err := os.Create(tempFilename)
+	if err != nil {
+		return fmt.Sprintf("Ошибка создания временного файла: %v", err)
+	}
+	defer tempFile.Close()
+
+	scanner := bufio.NewScanner(originalFile)
+	for scanner.Scan() {
+		line := scanner.Text()
+		bookData, err := lineToDict(line)
+		if err != nil {
+			return fmt.Sprintf("Ошибка парсинга строки: %v", err)
+		}
+
+		bookID := bookData["id"]
+		if bookToModify, exists := bookMap[bookID]; exists {
+			found = true
+			if update {
+				// Update the book
+				newLine := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
+					bookToModify.ID,
+					bookToModify.Name,
+					bookToModify.Year,
+					bookToModify.Authors,
+					bookToModify.Genres,
+					bookToModify.Width,
+					bookToModify.Height,
+					bookToModify.Cover,
+					bookToModify.Source,
+					bookToModify.Added,
+					bookToModify.Read,
+					bookToModify.Rating)
+
+				if _, err := tempFile.WriteString(newLine + "\n"); err != nil {
+					return fmt.Sprintf("Ошибка записи во временный файл: %v", err)
+				}
+				result.WriteString(fmt.Sprintf("Обновлена книга: %s (ID: %s)\n", bookToModify.Name, bookToModify.ID))
+			}
+			// For delete, we just skip writing this line
+			if !update {
+				result.WriteString(fmt.Sprintf("Удалена книга: %s (ID: %s)\n", bookData["name"], bookID))
+			}
+		} else {
+			// Write the original line for books not being modified
+			if _, err := tempFile.WriteString(line + "\n"); err != nil {
+				return fmt.Sprintf("Ошибка записи во временный файл: %v", err)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Sprintf("Ошибка чтения файла: %v", err)
+	}
+
+	if !found {
+		os.Remove(tempFilename)
+		return "Книги не найдены для изменения"
+	}
+
+	// Replace the original file with the temp file
+	originalFile.Close()
+	if err := os.Remove(FILENAME); err != nil {
+		return fmt.Sprintf("Ошибка удаления оригинального файла: %v", err)
+	}
+	if err := os.Rename(tempFilename, FILENAME); err != nil {
+		return fmt.Sprintf("Ошибка переименования временного файла: %v", err)
+	}
+
+	// Cleanup old backups
+	if err := cleanupBackups(); err != nil {
+		log.Printf("Ошибка очистки бэкапов: %v", err)
+	}
+
+	return result.String()
+}
+func searchBooks(field, value string) ([]Book, error) {
+	var results []Book
+
+	// Check if file exists
+	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
+		return results, nil
+	}
+
+	file, err := os.Open(FILENAME)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка открытия файла: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		bookMap, err := lineToDict(line)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка парсинга строки: %v", err)
+		}
+
+		// Сопоставление внешних имен полей с внутренними
+		internalField := field
+		if field == "cover" {
+			internalField = "book_type"
+		}
+
+		valueBook, exists := bookMap[internalField]
+		if !exists {
+			continue
+		}
+
+		book := Book{
+			ID:      bookMap["id"],
+			Name:    bookMap["name"],
+			Year:    bookMap["year"],
+			Authors: bookMap["authors"],
+			Genres:  bookMap["genres"],
+			Width:   bookMap["width"],
+			Height:  bookMap["height"],
+			Cover:   bookMap["book_type"],
+			Source:  bookMap["source"],
+			Added:   bookMap["date_added"],
+			Read:    bookMap["date_read"],
+			Rating:  bookMap["rating"],
+		}
+
+		if field == "id" {
+			if valueBook == value {
+				return []Book{book}, nil
+			}
+		} else if contains([]string{"year", "width", "height"}, field) {
+			if valueBook == value {
+				results = append(results, book)
+			}
+		} else {
+			if strings.Contains(strings.ToLower(valueBook), strings.ToLower(value)) {
+				results = append(results, book)
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка чтения файла: %v", err)
+	}
+
+	return results, nil
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
 func displayUpdateMenu() string {
 	return `
  ---------------
@@ -874,8 +1191,8 @@ ID: %s
 				}
 			}
 		case "3":
-			sendMessage(displayUpdateMenu())
-		updateLoop:
+			sendMessage(displaySearchMenu())
+		searchLoop:
 			for scanner.Scan() {
 				subText := strings.TrimSpace(scanner.Text())
 				log.Printf("%s прислал: %s", remoteAddr, subText)
@@ -883,12 +1200,75 @@ ID: %s
 				case "exit":
 					sendMessage("Возврат в главное меню")
 					sendMessage(displayMenu())
-					break updateLoop
+					break searchLoop
 				case "0":
-					sendMessage(displayUpdateMenu())
+					sendMessage(displaySearchMenu())
 				case "1":
-					sendMessage("Обновление книг...")
-					sendMessage("Книги обновлены. Отправьте '0' для просмотра меню")
+					// Search for books to update
+					sendMessage(displayFilterMenu())
+					var field, value string
+
+				filterLoop:
+					for scanner.Scan() {
+						input := strings.TrimSpace(scanner.Text())
+						log.Printf("%s прислал: %s", remoteAddr, input)
+						switch input {
+						case "exit":
+							sendMessage("Возврат в меню обновления")
+							sendMessage(displaySearchMenu())
+							break filterLoop
+						case "0":
+							sendMessage(displayFilterMenu())
+						case "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12":
+							choice, err := strconv.Atoi(input)
+							if err != nil {
+								sendMessage("Неверный номер поля")
+								continue
+							}
+
+							fields := []string{"id", "name", "year", "authors", "genres",
+								"width", "height", "cover", "source",
+								"added", "read", "rating"}
+
+							if choice < 1 || choice > len(fields) {
+								sendMessage("Неверный номер поля")
+								continue
+							}
+
+							field = fields[choice-1]
+							sendMessage(fmt.Sprintf("Введите значение для поиска по полю '%s':", field))
+
+							// Get search value with validation
+							for scanner.Scan() {
+								value = strings.TrimSpace(scanner.Text())
+								if field == "id" || field == "width" || field == "height" {
+									if _, err := strconv.Atoi(value); err != nil {
+										sendMessage("Должно быть целое число. Попробуйте снова:")
+										continue
+									}
+								}
+								break
+							}
+
+							// Search for books
+							books, err := searchBooks(field, value)
+							if err != nil {
+								sendMessage(fmt.Sprintf("Ошибка поиска: %v", err))
+								continue filterLoop
+							}
+
+							if len(books) == 0 {
+								sendMessage("Книги не найдены")
+								continue filterLoop
+							}
+
+							sendMessage("Найдены книги:")
+							sendMessage(formatBookList(books))
+
+						default:
+							sendMessage("Неверный выбор в подменю. Попробуйте снова.")
+						}
+					}
 				default:
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
@@ -909,6 +1289,26 @@ ID: %s
 				case "1":
 					sendMessage("Удаление книг...")
 					sendMessage("Книги удалены. Отправьте '0' для просмотра меню")
+				default:
+					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
+				}
+			}
+		case "5":
+			sendMessage(displayUpdateMenu())
+		updateLoop:
+			for scanner.Scan() {
+				subText := strings.TrimSpace(scanner.Text())
+				log.Printf("%s <UNK>: %s", remoteAddr, subText)
+				switch subText {
+				case "exit":
+					sendMessage("<UNK> <UNK> <UNK> <UNK>")
+					sendMessage(displayMenu())
+					break updateLoop
+				case "0":
+					sendMessage(displayUpdateMenu())
+				case "1":
+					sendMessage("Обновление книги...")
+					sendMessage("Книги обновлены. Отправьте '0' для просмотра меню")
 				default:
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
