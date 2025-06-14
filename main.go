@@ -10,16 +10,269 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
-const port = ":5000"
-const FILENAME = "books"
+var regexSchema = map[string]string{
+	"name":    `^[А-Яа-яЁёA-Za-z0-9\s,]{1,100}$`,
+	"authors": `^[А-Яа-яЁёA-Za-z\s,]{1,130}$`,
+	"genres":  `^[А-Яа-яЁёA-Za-z\s,]{1,100}$`,
+	"year":    `^\d{4}$`,
+	"width":   `^\d+(\.\d+)?$`,
+	"height":  `^\d+(\.\d+)?$`,
+	"cover":   `^(мягкий|твердый)$`,
+	"source":  `^(покупка|подарок|наследство)$`,
+	"added":   `^\d{2}-\d{2}-\d{4}$`,
+	"read":    `^\d{2}-\d{2}-\d{4}$`,
+	"rating":  `^([1-9]|10)/10 - [А-Яа-яЁёA-Za-z0-9\s\,\.\!\?]{1,200}$`,
+}
 
-var (
-	fileMutex sync.Mutex
-)
+var token = make(chan struct{}, 1)
+
+func ValidateRegex(field, value string) error {
+	pattern, ok := regexSchema[field]
+	if !ok {
+		return fmt.Errorf("некорректное поле: %s", field)
+	}
+
+	re := regexp.MustCompile(pattern)
+	if !re.MatchString(value) {
+		return fmt.Errorf("неверный формат для поля %s", pattern)
+	}
+	return nil
+}
+
+func ValidateYear(year string) error {
+	if err := ValidateRegex("year", year); err != nil {
+		return err
+	}
+
+	yearInt, err := strconv.Atoi(year)
+	if err != nil {
+		return err
+	}
+
+	currentYear := time.Now().Year()
+	if yearInt > currentYear {
+		return errors.New("год не может быть больше текущего")
+	}
+	if yearInt < 1500 {
+		return errors.New("год не может быть меньше 1500")
+	}
+	return nil
+}
+
+func ValidateHeightWidth(value, heightOrWidth string) error {
+	field := "width"
+	if heightOrWidth == "height" {
+		field = "height"
+	}
+
+	if err := ValidateRegex(field, value); err != nil {
+		return err
+	}
+
+	val, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return err
+	}
+
+	if val > 1000 {
+		return fmt.Errorf("%s обложка не может быть больше метра", heightOrWidth)
+	}
+	if val <= 0 {
+		return fmt.Errorf("%s обложка может быть только положительной", heightOrWidth)
+	}
+	return nil
+}
+
+func ValidateAdded(added, year string) error {
+	if err := ValidateRegex("added", added); err != nil {
+		return err
+	}
+
+	addedDate, err := time.Parse("02-01-2006", added)
+	if err != nil {
+		return err
+	}
+
+	yearInt, err := strconv.Atoi(year)
+	if err != nil {
+		return err
+	}
+
+	if addedDate.After(time.Now()) {
+		return errors.New("дата добавления не может быть в будущем")
+	}
+	if addedDate.Year() < yearInt {
+		return errors.New("дата добавления не может быть раньше даты издания")
+	}
+	return nil
+}
+
+func ValidateRead(read, added string) error {
+	if read == "" {
+		return nil
+	}
+
+	if err := ValidateRegex("read", read); err != nil {
+		return err
+	}
+
+	readDate, err := time.Parse("02-01-2006", read)
+	if err != nil {
+		return err
+	}
+
+	addedDate, err := time.Parse("02-01-2006", added)
+	if err != nil {
+		return err
+	}
+
+	if readDate.Before(addedDate) {
+		return errors.New("дата чтения не может быть до даты добавления")
+	}
+	return nil
+}
+
+func ValidateRating(rating string) error {
+	if rating == "" {
+		return nil
+	}
+	if err := ValidateRegex("rating", rating); err != nil {
+		return fmt.Errorf("рейтинг должен быть в формате 'X/10 - комментарий' (например: '8/10 - отличная книга')")
+	}
+	return nil
+}
+
+func ValidateCover(bookType string) error {
+	if err := ValidateRegex("cover", bookType); err != nil {
+		return fmt.Errorf("тип обложки должен быть 'мягкий' или 'твердый'")
+	}
+	return nil
+}
+
+func ValidateSource(source string) error {
+	if err := ValidateRegex("source", source); err != nil {
+		return fmt.Errorf("источник должен быть: 'покупка', 'подарок' или 'наследство'")
+	}
+	return nil
+}
+
+func ValidateName(name string) error {
+	if strings.Contains(name, "  ") {
+		return fmt.Errorf("название не должно содержать двойных пробелов")
+	}
+
+	if err := ValidateRegex("name", name); err != nil {
+		return fmt.Errorf("название может содержать только буквы, цифры и пробелы")
+	}
+
+	if len(name) < 1 || len(name) > 100 {
+		return fmt.Errorf("название должно быть от 1 до 100 символов")
+	}
+
+	return nil
+}
+func normalizeCommas(input string) string {
+	// Заменяем " , " или любые пробелы вокруг запятых на ", "
+	re := regexp.MustCompile(`\s*,\s*`)
+	return re.ReplaceAllString(input, ",")
+}
+
+func ValidateAuthors(authors string) (string, error) {
+	normalized := normalizeCommas(authors)
+	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
+		return "", fmt.Errorf("авторы не должны содержать двойных пробелов или запятых")
+	}
+
+	if err := ValidateRegex("authors", normalized); err != nil {
+		return "", fmt.Errorf("авторы могут содержать только буквы, пробелы и запятые")
+	}
+
+	return normalized, nil
+}
+
+func ValidateGenres(genres string) (string, error) {
+	normalized := normalizeCommas(genres)
+	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
+		return "", fmt.Errorf("жанры не должны содержать двойных пробелов или запятых")
+	}
+
+	if err := ValidateRegex("genres", normalized); err != nil {
+		return "", fmt.Errorf("жанры могут содержать только буквы, пробелы и запятые")
+	}
+
+	return normalized, nil
+}
+
+func isUniqueBook(book Book) (bool, error) {
+	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
+		return true, nil // файла не существует
+	}
+
+	file, err := os.Open(FILENAME)
+	if err != nil {
+		return false, fmt.Errorf("ошибка открытия файла: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		existingBook, err := lineToDict(line)
+		if err != nil {
+			return false, fmt.Errorf("ошибка парсинга строки: %v", err)
+		}
+
+		if existingBook["name"] == book.Name && existingBook["authors"] == book.Authors {
+			return false, nil
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("ошибка чтения файла: %v", err)
+	}
+
+	return true, nil
+}
+
+func appendBookToFile(book Book) error {
+	token <- struct{}{}        // Отправляем значение в канал (захватываем токен)
+	defer func() { <-token }() // Освобождаем токен при завершении
+	file, err := os.OpenFile(FILENAME, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("ошибка открытия файла: %v", err)
+	}
+	defer file.Close()
+
+	line := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+		book.ID,
+		book.Name,
+		book.Year,
+		book.Authors,
+		book.Genres,
+		book.Width,
+		book.Height,
+		book.Cover,
+		book.Source,
+		book.Added,
+		book.Read,
+		book.Rating,
+	)
+
+	if _, err := file.WriteString(line); err != nil {
+		return fmt.Errorf("ошибка записи в файл: %v", err)
+	}
+
+	return nil
+}
+
+const port = ":5000"
 
 type Book struct {
 	ID      string
@@ -62,343 +315,11 @@ func displayCreateMenu() string {
 |---- exit - Назад
 `
 }
-func displayReadMenu() string {
-	return `
- ---------------
-| Просмотр книг |
- ---------------
-2/
-|---- 0 - Меню
-|---- 1 - Вывести книги
-|---- exit -  Назад
-`
-}
-func displaySearchMenu() string {
-	return `
- ---------------
-| Просмотр книг |
- ---------------
-3/
-|---- 0 - Меню
-|---- 1 - Найти книги
-|---- exit -  Назад
-`
-}
-func displayDeleteMenu() string {
-	return `
----------------
-| Удалить книги |
- ---------------
-4/
-|---- 0 - Меню
-|---- 1 - Удалить книги
-|---- exit -  Назад
-`
-}
 
-func displayUpdateMenu() string {
-	return `
- ---------------
-| Обновить книги |
- ---------------
-5/
-|---- 0 - Меню
-|---- 1 - Обновить книги
-|---- exit -  Назад
-`
-}
-
-func displayFilterMenu() string {
-	return `
- -------------
-| Найти книги |
- -------------
----- */
-|---- ---- 0 - Меню
-|---- ---- 1 - По полю 'id'
-|---- ---- 2 - По полю 'name'
-|---- ---- 3 - По полю 'year'
-|---- ---- 4 - По полю 'authors'
-|---- ---- 5 - По полю 'genres'
-|---- ---- 6 - По полю 'width'
-|---- ---- 7 - По полю 'height'
-|---- ---- 8 - По полю 'cover'
-|---- ---- 9 - По полю 'source'
-|---- ---- 10 - По полю 'added'
-|---- ---- 11 - По полю 'read'
-|---- ---- 12 - По полю 'rating'
-|---- ---- exit -  Назад
-`
-}
-
-var regexSchema = map[string]string{
-	"name":    `^[А-Яа-яЁёA-Za-z0-9\s]{1,100}$`,
-	"authors": `^[А-Яа-яЁёA-Za-z\s,]{1,130}$`,
-	"genres":  `^[А-Яа-яЁёA-Za-z\s,]{1,100}$`,
-	"year":    `^\d{4}$`,
-	"width":   `^\d+(\.\d+)?$`,
-	"height":  `^\d+(\.\d+)?$`,
-	"cover":   `^(мягкий|твердый)$`,
-	"source":  `^(покупка|подарок|наследство)$`,
-	"added":   `^\d{2}-\d{2}-\d{4}$`,
-	"read":    `^\d{2}-\d{2}-\d{4}$`,
-	"rating":  `^([1-9]|10)/10 - [А-Яа-яЁёA-Za-z0-9\s\,\.\!\?]{1,200}$`,
-}
-
-// ValidateRegex - валидация данных по регулярке
-func ValidateRegex(field, value string) error {
-	pattern, ok := regexSchema[field]
-	if !ok {
-		return fmt.Errorf("некорректное поле: %s", field)
-	}
-
-	re := regexp.MustCompile(pattern)
-	if !re.MatchString(value) {
-		return fmt.Errorf("неверный формат для поля %s", pattern)
-	}
-	return nil
-}
-
-// ValidateName - валидация названия книги
-func ValidateName(name string) error {
-	if strings.Contains(name, "  ") {
-		return fmt.Errorf("название не должно содержать двойных пробелов")
-	}
-
-	if err := ValidateRegex("name", name); err != nil {
-		return fmt.Errorf("название может содержать только буквы, цифры и пробелы")
-	}
-
-	if len(name) < 1 || len(name) > 100 {
-		return fmt.Errorf("название должно быть от 1 до 100 символов")
-	}
-
-	return nil
-}
-
-// normalizeCommas - убрать пробелы между запятой в полях `genres` и  `authors`
-func normalizeCommas(input string) string {
-	// Заменяем " , " или любые пробелы вокруг запятых на ","
-	re := regexp.MustCompile(`\s*,\s*`)
-	return re.ReplaceAllString(input, ",")
-}
-
-// ValidateAuthors - проверить
-func ValidateAuthors(authors string) (string, error) {
-	normalized := normalizeCommas(authors)
-	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
-		return "", fmt.Errorf("авторы не должны содержать двойных пробелов или запятых")
-	}
-
-	if err := ValidateRegex("authors", normalized); err != nil {
-		return "", fmt.Errorf("авторы могут содержать только буквы, пробелы и запятые")
-	}
-
-	return normalized, nil
-}
-
-// ValidateGenres - валидация набора жанров книги
-func ValidateGenres(genres string) (string, error) {
-	normalized := normalizeCommas(genres)
-	if strings.Contains(normalized, "  ") || strings.Contains(normalized, ",,") {
-		return "", fmt.Errorf("жанры не должны содержать двойных пробелов или запятых")
-	}
-
-	if err := ValidateRegex("genres", normalized); err != nil {
-		return "", fmt.Errorf("жанры могут содержать только буквы, пробелы и запятые")
-	}
-
-	return normalized, nil
-}
-
-// ValidateYear - валидация даты издания книги
-func ValidateYear(year string) error {
-	if err := ValidateRegex("year", year); err != nil {
-		return err
-	}
-
-	yearInt, err := strconv.Atoi(year)
-	if err != nil {
-		return err
-	}
-
-	currentYear := time.Now().Year()
-	if yearInt > currentYear {
-		return errors.New("год не может быть больше текущего")
-	}
-	if yearInt < 1500 {
-		return errors.New("год не может быть меньше 1500")
-	}
-	return nil
-}
-
-// ValidateHeightWidth - валидация ширины и высоты книги
-func ValidateHeightWidth(value, heightOrWidth string) error {
-	field := "width"
-	if heightOrWidth == "height" {
-		field = "height"
-	}
-
-	if err := ValidateRegex(field, value); err != nil {
-		return err
-	}
-
-	val, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return err
-	}
-
-	if val > 1000 {
-		return fmt.Errorf("%s обложка не может быть больше метра", heightOrWidth)
-	}
-	if val <= 0 {
-		return fmt.Errorf("%s обложка может быть только положительной", heightOrWidth)
-	}
-	return nil
-}
-
-// ValidateCover - валидация типа переплета
-func ValidateCover(bookType string) error {
-	if err := ValidateRegex("cover", bookType); err != nil {
-		return fmt.Errorf("тип обложки должен быть 'мягкий' или 'твердый'")
-	}
-	return nil
-}
-
-// ValidateSource - валидация источника получения книги
-func ValidateSource(source string) error {
-	if err := ValidateRegex("source", source); err != nil {
-		return fmt.Errorf("источник должен быть: 'покупка', 'подарок' или 'наследство'")
-	}
-	return nil
-}
-
-// ValidateAdded - валидация даты добавления книги в библиотеку
-func ValidateAdded(added, year string) error {
-	if err := ValidateRegex("added", added); err != nil {
-		return err
-	}
-
-	addedDate, err := time.Parse("02-01-2006", added)
-	if err != nil {
-		return err
-	}
-
-	yearInt, err := strconv.Atoi(year)
-	if err != nil {
-		return err
-	}
-
-	if addedDate.After(time.Now()) {
-		return errors.New("дата добавления не может быть в будущем")
-	}
-	if addedDate.Year() < yearInt {
-		return errors.New("дата добавления не может быть раньше даты издания")
-	}
-	return nil
-}
-
-// ValidateRead - валидация даты прочтения книги
-func ValidateRead(read, added string) error {
-	if read == "" {
-		return nil
-	}
-
-	if err := ValidateRegex("read", read); err != nil {
-		return err
-	}
-
-	readDate, err := time.Parse("02-01-2006", read)
-	if err != nil {
-		return err
-	}
-
-	addedDate, err := time.Parse("02-01-2006", added)
-	if err != nil {
-		return err
-	}
-
-	if readDate.Before(addedDate) {
-		return errors.New("дата чтения не может быть до даты добавления")
-	}
-	return nil
-}
-
-// ValidateRating - валидация отзыва о книге
-func ValidateRating(rating string) error {
-	if rating == "" {
-		return nil
-	}
-	if err := ValidateRegex("rating", rating); err != nil {
-		return fmt.Errorf("рейтинг должен быть в формате 'X/10 - комментарий' (например: '8/10 - отличная книга')")
-	}
-	return nil
-}
-
-// CREATE
-func isUniqueBook(book Book) (bool, error) {
-	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
-		return true, nil // файла не существует
-	}
-
-	file, err := os.Open(FILENAME)
-	if err != nil {
-		return false, fmt.Errorf("ошибка открытия файла: %v", err)
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		existingBook, err := lineToDict(line)
-		if err != nil {
-			return false, fmt.Errorf("ошибка парсинга строки: %v", err)
-		}
-
-		if existingBook["name"] == book.Name && existingBook["authors"] == book.Authors {
-			return false, nil
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return false, fmt.Errorf("ошибка чтения файла: %v", err)
-	}
-
-	return true, nil
-}
-
-func appendBookToFile(book Book) error {
-	file, err := os.OpenFile(FILENAME, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("ошибка открытия файла: %v", err)
-	}
-	defer file.Close()
-
-	line := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
-		book.ID,
-		book.Name,
-		book.Year,
-		book.Authors,
-		book.Genres,
-		book.Width,
-		book.Height,
-		book.Cover,
-		book.Source,
-		book.Added,
-		book.Read,
-		book.Rating,
-	)
-
-	if _, err := file.WriteString(line); err != nil {
-		return fmt.Errorf("ошибка записи в файл: %v", err)
-	}
-
-	return nil
-}
+const (
+	FILENAME     = "books"
+	tempFilename = "temp_books.txt"
+)
 
 func lineToDict(line string) (map[string]string, error) {
 	parts := strings.Split(strings.TrimSpace(line), "|")
@@ -493,9 +414,6 @@ func Create(book Book) string {
 	return fmt.Sprintf("Добавлена книга: %s (ID: %d)", book.Name, bookID)
 
 }
-
-// READ
-
 func Read() ([]Book, error) {
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return nil, nil // Файла нет - возвращаем пустой список
@@ -568,8 +486,52 @@ func formatBookList(books []Book) string {
 	return builder.String()
 
 }
+func displayReadMenu() string {
+	return `
+ ---------------
+| Просмотр книг |
+ ---------------
+2/
+|---- 0 - Меню
+|---- 1 - Вывести книги
+|---- exit -  Назад
+`
+}
+func displaySearchMenu() string {
+	return `
+ ---------------
+| Просмотр книг |
+ ---------------
+3/
+|---- 0 - Меню
+|---- 1 - Найти книги
+|---- exit -  Назад
+`
+}
+func displayFilterMenu() string {
+	return `
+ -------------
+| Найти книги |
+ -------------
+---- */
+|---- ---- 0 - Меню
+|---- ---- 1 - По полю 'id'
+|---- ---- 2 - По полю 'name'
+|---- ---- 3 - По полю 'year'
+|---- ---- 4 - По полю 'authors'
+|---- ---- 5 - По полю 'genres'
+|---- ---- 6 - По полю 'width'
+|---- ---- 7 - По полю 'height'
+|---- ---- 8 - По полю 'cover'
+|---- ---- 9 - По полю 'source'
+|---- ---- 10 - По полю 'added'
+|---- ---- 11 - По полю 'read'
+|---- ---- 12 - По полю 'rating'
+|---- ---- exit -  Назад
+`
+}
 
-// UPDATE & DELETE
+// getField returns the value of the specified field from the Book struct
 func (b *Book) getField(field string) string {
 	switch field {
 	case "id":
@@ -601,7 +563,7 @@ func (b *Book) getField(field string) string {
 	}
 }
 
-// Обновить поле
+// setField updates the specified field in the Book struct with validation
 func (b *Book) setField(field string, value string) error {
 	switch field {
 	case "id":
@@ -676,20 +638,20 @@ func (b *Book) setField(field string, value string) error {
 	return nil
 }
 
-// Обновление - удаление и редактирование
+// modifyBooksFile updates or deletes books in the file atomically
 func modifyBooksFile(books []Book, update bool) string {
-
-	tempFilename := "temp_books.txt"
+	token <- struct{}{}
+	defer func() { <-token }()
 	found := false
 	var result strings.Builder
 
-	// книги для обновления/удаления
+	// Create a map of books to update/delete for quick lookup
 	bookMap := make(map[string]Book)
 	for _, book := range books {
 		bookMap[book.ID] = book
 	}
 
-	// открытие файлов
+	// Open original file and temporary file
 	originalFile, err := os.Open(FILENAME)
 	if err != nil {
 		return fmt.Sprintf("Ошибка открытия файла: %v", err)
@@ -714,7 +676,7 @@ func modifyBooksFile(books []Book, update bool) string {
 		if bookToModify, exists := bookMap[bookID]; exists {
 			found = true
 			if update {
-				// обновление книги
+				// Update the book
 				newLine := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s",
 					bookToModify.ID,
 					bookToModify.Name,
@@ -734,12 +696,12 @@ func modifyBooksFile(books []Book, update bool) string {
 				}
 				result.WriteString(fmt.Sprintf("Обновлена книга: %s (ID: %s)\n", bookToModify.Name, bookToModify.ID))
 			}
-			// пропускаем строку
+			// For delete, we just skip writing this line
 			if !update {
 				result.WriteString(fmt.Sprintf("Удалена книга: %s (ID: %s)\n", bookData["name"], bookID))
 			}
 		} else {
-			// записываем не найденные строки
+			// Write the original line for books not being modified
 			if _, err := tempFile.WriteString(line + "\n"); err != nil {
 				return fmt.Sprintf("Ошибка записи во временный файл: %v", err)
 			}
@@ -755,7 +717,7 @@ func modifyBooksFile(books []Book, update bool) string {
 		return "Книги не найдены для изменения"
 	}
 
-	// Заменим файл обратно
+	// Replace the original file with the temp file
 	originalFile.Close()
 	if err := os.Remove(FILENAME); err != nil {
 		return fmt.Sprintf("Ошибка удаления оригинального файла: %v", err)
@@ -767,11 +729,10 @@ func modifyBooksFile(books []Book, update bool) string {
 	return result.String()
 }
 
-// SEARCH
 func searchBooks(field, value string) ([]Book, error) {
 	var results []Book
 
-	// Проверим, существует ли файл
+	// Check if file exists
 	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
 		return results, nil
 	}
@@ -850,32 +811,38 @@ func contains(slice []string, item string) bool {
 	}
 	return false
 }
-
-func main() {
-	listener, err := net.Listen("tcp", port)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer listener.Close()
-	log.Printf("Сервер слушает на %s", port)
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			log.Printf("Ошибка соединения: %v", err)
-			continue
-		}
-		go handleClient(conn)
-	}
+func displayUpdateMenu() string {
+	return `
+ ---------------
+| Обновить книги |
+ ---------------
+5/
+|---- 0 - Меню
+|---- 1 - Обновить книги
+|---- exit -  Назад
+`
 }
+
+func displayDeleteMenu() string {
+	return `
+---------------
+| Удалить книги |
+ ---------------
+4/
+|---- 0 - Меню
+|---- 1 - Удалить книги
+|---- exit -  Назад
+`
+}
+
 func Delete(bookIDs []string) string {
-	// Чтение
+	// Read all books
 	books, err := Read()
 	if err != nil {
 		return fmt.Sprintf("Ошибка при чтении книг: %v", err)
 	}
 
-	// Фильтрация
+	// Filter books to delete
 	var booksToDelete []Book
 	for _, book := range books {
 		for _, id := range bookIDs {
@@ -890,7 +857,7 @@ func Delete(bookIDs []string) string {
 		return "Книги не найдены для удаления"
 	}
 
-	// Подтверждение
+	// Show confirmation
 	var builder strings.Builder
 	builder.WriteString("Найдены книги для удаления:\n")
 	for _, book := range booksToDelete {
@@ -902,13 +869,15 @@ func Delete(bookIDs []string) string {
 }
 
 func Update(book Book) string {
-	// Чтение
+	token <- struct{}{}        // Отправляем значение в канал (захватываем токен)
+	defer func() { <-token }() // Освобождаем токен при завершении
+	// Read all books
 	books, err := Read()
 	if err != nil {
 		return fmt.Sprintf("Ошибка при чтении книг: %v", err)
 	}
 
-	// Найти книги для обновления
+	// Find the book to update
 	var found bool
 	for i, b := range books {
 		if b.ID == book.ID {
@@ -922,7 +891,7 @@ func Update(book Book) string {
 		return fmt.Sprintf("Книга с ID %s не найдена", book.ID)
 	}
 
-	// Записать все книги в файл
+	// Write all books back to file
 	tempFilename := "temp_books.txt"
 	tempFile, err := os.Create(tempFilename)
 	if err != nil {
@@ -950,7 +919,7 @@ func Update(book Book) string {
 		}
 	}
 
-	// Заменить файл на исходный
+	// Replace the original file
 	if err := os.Remove(FILENAME); err != nil {
 		return fmt.Sprintf("Ошибка удаления оригинального файла: %v", err)
 	}
@@ -960,6 +929,7 @@ func Update(book Book) string {
 
 	return fmt.Sprintf("Книга с ID %s успешно обновлена", book.ID)
 }
+
 func handleClient(conn net.Conn) {
 	defer conn.Close()
 	remoteAddr := conn.RemoteAddr().String()
@@ -1180,6 +1150,7 @@ ID: %s
 						confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
 						log.Printf("%s прислал: %s", remoteAddr, confirm)
 						if confirm == "д" || confirm == "y" {
+							// Here you would typically save the book to your storage
 							sendMessage("Добавление книги... ")
 							Create(book)
 							sendMessage("Книга добавлена. Отправьте '0' для просмотра меню")
@@ -1233,6 +1204,7 @@ ID: %s
 				case "0":
 					sendMessage(displaySearchMenu())
 				case "1":
+					// Search for books to update
 					sendMessage(displayFilterMenu())
 					var field, value string
 
@@ -1266,7 +1238,7 @@ ID: %s
 							field = fields[choice-1]
 							sendMessage(fmt.Sprintf("Введите значение для поиска по полю '%s':", field))
 
-							// Получить значение поиска с валидацией
+							// Get search value with validation
 							for scanner.Scan() {
 								value = strings.TrimSpace(scanner.Text())
 								if field == "id" || field == "width" || field == "height" {
@@ -1278,7 +1250,7 @@ ID: %s
 								break
 							}
 
-							// Поиск книг
+							// Search for books
 							books, err := searchBooks(field, value)
 							if err != nil {
 								sendMessage(fmt.Sprintf("Ошибка поиска: %v", err))
@@ -1320,19 +1292,20 @@ ID: %s
 					idsInput := strings.TrimSpace(scanner.Text())
 					bookIDs := strings.Split(idsInput, ",")
 
-					// Убрать пробелы
+					// Trim spaces from each ID
 					for i, id := range bookIDs {
 						bookIDs[i] = strings.TrimSpace(id)
 					}
 
-					// Запросить подтверждение
+					// Show confirmation
 					response := Delete(bookIDs)
 					sendMessage(response)
 
+					// Get confirmation
 					scanner.Scan()
 					confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
 					if confirm == "д" || confirm == "y" {
-						// Удалить
+						// Perform actual deletion
 						var booksToDelete []Book
 						allBooks, _ := Read()
 						for _, book := range allBooks {
@@ -1369,11 +1342,12 @@ ID: %s
 				case "0":
 					sendMessage(displayUpdateMenu())
 				case "1":
-					// Найти
+					// First find the book to update
 					sendMessage("Введите ID книги для обновления:")
 					scanner.Scan()
 					bookID := strings.TrimSpace(scanner.Text())
 
+					// Search for the book
 					books, err := searchBooks("id", bookID)
 					if err != nil || len(books) == 0 {
 						sendMessage("Книга не найдена")
@@ -1384,7 +1358,7 @@ ID: %s
 					sendMessage(fmt.Sprintf("Найдена книга: %s", book.Name))
 					sendMessage("Введите новые значения (оставьте пустым, чтобы не изменять)")
 
-					// Обновить каждое поле
+					// Update each field
 					fields := []struct {
 						name     string
 						prompt   string
@@ -1452,6 +1426,7 @@ ID: %s
 						}
 					}
 
+					// Show changes
 					sendMessage("Изменения:")
 					sendMessage(fmt.Sprintf(`
 ID: %s
@@ -1487,5 +1462,27 @@ ID: %s
 			log.Printf("Ошибка чтения от %s: %v", remoteAddr, err)
 		}
 		log.Printf("Соединение с %s закрыто", remoteAddr)
+	}
+}
+
+func main() {
+	listener, err := net.Listen("tcp", port)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer listener.Close()
+	log.Printf("Сервер слушает на %s", port)
+	if _, err := os.Open(FILENAME); err != nil {
+		os.Rename(tempFilename, FILENAME)
+	}
+	os.Remove(tempFilename)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Printf("Ошибка соединения: %v", err)
+			continue
+		}
+		go handleClient(conn)
 	}
 }
