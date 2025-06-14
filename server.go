@@ -590,24 +590,6 @@ func displayFilterMenu() string {
 |---- ---- exit -  Назад
 `
 }
-func chooseFieldMenu() string {
-	return `
- -------------
----- */
-|---- ---- 1 - По полю 'id'
-|---- ---- 2 - По полю 'name'
-|---- ---- 3 - По полю 'year'
-|---- ---- 4 - По полю 'authors'
-|---- ---- 5 - По полю 'genres'
-|---- ---- 6 - По полю 'width'
-|---- ---- 7 - По полю 'height'
-|---- ---- 8 - По полю 'cover'
-|---- ---- 9 - По полю 'source'
-|---- ---- 10 - По полю 'added'
-|---- ---- 11 - По полю 'read'
-|---- ---- 12 - По полю 'rating'
-`
-}
 
 // getField returns the value of the specified field from the Book struct
 func (b *Book) getField(field string) string {
@@ -902,7 +884,7 @@ func displayUpdateMenu() string {
  ---------------
 | Обновить книги |
  ---------------
-3/
+5/
 |---- 0 - Меню
 |---- 1 - Обновить книги
 |---- exit -  Назад
@@ -938,7 +920,108 @@ func main() {
 		go handleClient(conn)
 	}
 }
+func Delete(bookIDs []string) string {
+	// Read all books
+	books, err := Read()
+	if err != nil {
+		return fmt.Sprintf("Ошибка при чтении книг: %v", err)
+	}
 
+	// Filter books to delete
+	var booksToDelete []Book
+	for _, book := range books {
+		for _, id := range bookIDs {
+			if book.ID == id {
+				booksToDelete = append(booksToDelete, book)
+				break
+			}
+		}
+	}
+
+	if len(booksToDelete) == 0 {
+		return "Книги не найдены для удаления"
+	}
+
+	// Show confirmation
+	var builder strings.Builder
+	builder.WriteString("Найдены книги для удаления:\n")
+	for _, book := range booksToDelete {
+		builder.WriteString(fmt.Sprintf("ID: %s, Название: %s, Авторы: %s\n", book.ID, book.Name, book.Authors))
+	}
+	builder.WriteString("Подтвердите удаление (д/н):")
+
+	return builder.String()
+}
+
+func Update(book Book) string {
+	// Read all books
+	books, err := Read()
+	if err != nil {
+		return fmt.Sprintf("Ошибка при чтении книг: %v", err)
+	}
+
+	// Find the book to update
+	var found bool
+	for i, b := range books {
+		if b.ID == book.ID {
+			books[i] = book
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Sprintf("Книга с ID %s не найдена", book.ID)
+	}
+
+	// Create backup
+	if err := createBackup(); err != nil {
+		return fmt.Sprintf("Ошибка при создании бэкапа: %v", err)
+	}
+
+	// Write all books back to file
+	tempFilename := "temp_books.txt"
+	tempFile, err := os.Create(tempFilename)
+	if err != nil {
+		return fmt.Sprintf("Ошибка создания временного файла: %v", err)
+	}
+	defer tempFile.Close()
+
+	for _, book := range books {
+		line := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+			book.ID,
+			book.Name,
+			book.Year,
+			book.Authors,
+			book.Genres,
+			book.Width,
+			book.Height,
+			book.Cover,
+			book.Source,
+			book.Added,
+			book.Read,
+			book.Rating,
+		)
+		if _, err := tempFile.WriteString(line); err != nil {
+			return fmt.Sprintf("Ошибка записи во временный файл: %v", err)
+		}
+	}
+
+	// Replace the original file
+	if err := os.Remove(FILENAME); err != nil {
+		return fmt.Sprintf("Ошибка удаления оригинального файла: %v", err)
+	}
+	if err := os.Rename(tempFilename, FILENAME); err != nil {
+		return fmt.Sprintf("Ошибка переименования временного файла: %v", err)
+	}
+
+	// Cleanup old backups
+	if err := cleanupBackups(); err != nil {
+		log.Printf("Ошибка очистки бэкапов: %v", err)
+	}
+
+	return fmt.Sprintf("Книга с ID %s успешно обновлена", book.ID)
+}
 func handleClient(conn net.Conn) {
 	defer conn.Close()
 	remoteAddr := conn.RemoteAddr().String()
@@ -1273,7 +1356,7 @@ ID: %s
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
 			}
-		case "4":
+		case "4": // Delete
 			sendMessage(displayDeleteMenu())
 		deleteLoop:
 			for scanner.Scan() {
@@ -1287,38 +1370,170 @@ ID: %s
 				case "0":
 					sendMessage(displayDeleteMenu())
 				case "1":
-					sendMessage("Удаление книг...")
-					sendMessage("Книги удалены. Отправьте '0' для просмотра меню")
+					sendMessage("Введите ID книги для удаления (разделяйте запятыми для нескольких):")
+					scanner.Scan()
+					idsInput := strings.TrimSpace(scanner.Text())
+					bookIDs := strings.Split(idsInput, ",")
+
+					// Trim spaces from each ID
+					for i, id := range bookIDs {
+						bookIDs[i] = strings.TrimSpace(id)
+					}
+
+					// Show confirmation
+					response := Delete(bookIDs)
+					sendMessage(response)
+
+					// Get confirmation
+					scanner.Scan()
+					confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
+					if confirm == "д" || confirm == "y" {
+						// Perform actual deletion
+						var booksToDelete []Book
+						allBooks, _ := Read()
+						for _, book := range allBooks {
+							for _, id := range bookIDs {
+								if book.ID == id {
+									booksToDelete = append(booksToDelete, book)
+									break
+								}
+							}
+						}
+
+						result := modifyBooksFile(booksToDelete, false)
+						sendMessage(result)
+					} else {
+						sendMessage("Удаление отменено")
+					}
+					sendMessage("Отправьте '0' для просмотра меню")
 				default:
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
 			}
-		case "5":
+
+		case "5": // Update
 			sendMessage(displayUpdateMenu())
 		updateLoop:
 			for scanner.Scan() {
 				subText := strings.TrimSpace(scanner.Text())
-				log.Printf("%s <UNK>: %s", remoteAddr, subText)
+				log.Printf("%s прислал: %s", remoteAddr, subText)
 				switch subText {
 				case "exit":
-					sendMessage("<UNK> <UNK> <UNK> <UNK>")
+					sendMessage("Возврат в главное меню")
 					sendMessage(displayMenu())
 					break updateLoop
 				case "0":
 					sendMessage(displayUpdateMenu())
 				case "1":
-					sendMessage("Обновление книги...")
-					sendMessage("Книги обновлены. Отправьте '0' для просмотра меню")
+					// First find the book to update
+					sendMessage("Введите ID книги для обновления:")
+					scanner.Scan()
+					bookID := strings.TrimSpace(scanner.Text())
+
+					// Search for the book
+					books, err := searchBooks("id", bookID)
+					if err != nil || len(books) == 0 {
+						sendMessage("Книга не найдена")
+						continue
+					}
+
+					book := books[0]
+					sendMessage(fmt.Sprintf("Найдена книга: %s", book.Name))
+					sendMessage("Введите новые значения (оставьте пустым, чтобы не изменять)")
+
+					// Update each field
+					fields := []struct {
+						name     string
+						prompt   string
+						validate func(string) error
+					}{
+						{"name", "Название книги:", ValidateName},
+						{"authors", "Авторы (через запятую):", func(s string) error {
+							_, err := ValidateAuthors(s)
+							return err
+						}},
+						{"genres", "Жанры (через запятую):", func(s string) error {
+							_, err := ValidateGenres(s)
+							return err
+						}},
+						{"year", "Год издания:", ValidateYear},
+						{"width", "Ширина (мм):", func(s string) error {
+							return ValidateHeightWidth(s, "width")
+						}},
+						{"height", "Высота (мм):", func(s string) error {
+							return ValidateHeightWidth(s, "height")
+						}},
+						{"cover", "Тип обложки (мягкий/твердый):", ValidateCover},
+						{"source", "Источник (покупка/подарок/наследство):", ValidateSource},
+						{"added", "Дата добавления (ДД-ММ-ГГГГ):", func(s string) error {
+							return ValidateAdded(s, book.Year)
+						}},
+						{"read", "Дата прочтения (ДД-ММ-ГГГГ) или пусто:", func(s string) error {
+							if s == "" {
+								return nil
+							}
+							return ValidateRead(s, book.Added)
+						}},
+						{"rating", "Рейтинг (X/10 - комментарий) или пусто:", ValidateRating},
+					}
+
+					for _, field := range fields {
+						sendMessage(field.prompt + " (Текущее: " + book.getField(field.name) + ")")
+						scanner.Scan()
+						value := strings.TrimSpace(scanner.Text())
+						if value != "" {
+							if err := field.validate(value); err != nil {
+								sendMessage("Ошибка валидации: " + err.Error())
+								continue
+							}
+							// Special handling for authors and genres
+							if field.name == "authors" {
+								normalized, _ := ValidateAuthors(value)
+								book.Authors = normalized
+							} else if field.name == "genres" {
+								normalized, _ := ValidateGenres(value)
+								book.Genres = normalized
+							} else {
+								book.setField(field.name, value)
+							}
+						}
+					}
+
+					// Show changes
+					sendMessage("Изменения:")
+					sendMessage(fmt.Sprintf(`
+ID: %s
+Название: %s
+Авторы: %s
+Жанры: %s
+Год: %s
+Размер: %sx%s мм
+Тип обложки: %s
+Источник: %s
+Дата добавления: %s
+Дата прочтения: %s
+Рейтинг: %s
+`, book.ID, book.Name, book.Authors, book.Genres, book.Year, book.Width, book.Height,
+						book.Cover, book.Source, book.Added, book.Read, book.Rating))
+
+					sendMessage("Подтвердите обновление (д/н):")
+					scanner.Scan()
+					confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
+					if confirm == "д" || confirm == "y" {
+						result := Update(book)
+						sendMessage(result)
+					} else {
+						sendMessage("Обновление отменено")
+					}
+					sendMessage("Отправьте '0' для просмотра меню")
 				default:
 					sendMessage("Неверный выбор в подменю. Попробуйте снова.")
 				}
 			}
-		default:
-			sendMessage("Неверный выбор. Попробуйте снова.")
 		}
+		if err := scanner.Err(); err != nil {
+			log.Printf("Ошибка чтения от %s: %v", remoteAddr, err)
+		}
+		log.Printf("Соединение с %s закрыто", remoteAddr)
 	}
-	if err := scanner.Err(); err != nil {
-		log.Printf("Ошибка чтения от %s: %v", remoteAddr, err)
-	}
-	log.Printf("Соединение с %s закрыто", remoteAddr)
 }
