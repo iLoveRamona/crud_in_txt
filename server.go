@@ -7,9 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -186,7 +184,6 @@ func ValidateAuthors(authors string) (string, error) {
 		return "", fmt.Errorf("авторы не должны содержать двойных пробелов или запятых")
 	}
 
-	// Check allowed characters and length
 	if err := ValidateRegex("authors", normalized); err != nil {
 		return "", fmt.Errorf("авторы могут содержать только буквы, пробелы и запятые")
 	}
@@ -205,63 +202,6 @@ func ValidateGenres(genres string) (string, error) {
 	}
 
 	return normalized, nil
-}
-
-// createBackup создает бэкап в папке /backups
-func createBackup() error {
-	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
-		return nil // Файла нет - бэкап не нужен
-	}
-
-	// Создаем папку backups если ее нет
-	if err := os.MkdirAll(BACKUP_DIR, 0755); err != nil {
-		return fmt.Errorf("ошибка создания папки бэкапов: %v", err)
-	}
-
-	// Формируем имя файла с timestamp
-	backupName := fmt.Sprintf("%s/%s_%s.bak",
-		BACKUP_DIR,
-		FILENAME,
-		time.Now().Format("20060102_150405"))
-
-	// Читаем исходный файл
-	input, err := os.ReadFile(FILENAME)
-	if err != nil {
-		return fmt.Errorf("ошибка чтения файла для бэкапа: %v", err)
-	}
-
-	// Пишем бэкап
-	err = os.WriteFile(backupName, input, 0644)
-	if err != nil {
-		return fmt.Errorf("ошибка создания бэкапа: %v", err)
-	}
-
-	return nil
-}
-
-// cleanupBackups удаляет старые бэкапы, оставляя последние 5
-func cleanupBackups() error {
-	files, err := os.ReadDir(BACKUP_DIR)
-	if err != nil {
-		return fmt.Errorf("ошибка чтения папки бэкапов: %v", err)
-	}
-
-	// Сортируем по времени изменения (новые сначала)
-	sort.Slice(files, func(i, j int) bool {
-		infoI, _ := files[i].Info()
-		infoJ, _ := files[j].Info()
-		return infoI.ModTime().After(infoJ.ModTime())
-	})
-
-	// Удаляем все кроме 5 последних
-	for i := 5; i < len(files); i++ {
-		err := os.Remove(filepath.Join(BACKUP_DIR, files[i].Name()))
-		if err != nil {
-			return fmt.Errorf("ошибка удаления старого бэкапа: %v", err)
-		}
-	}
-
-	return nil
 }
 
 func isUniqueBook(book Book) (bool, error) {
@@ -373,8 +313,7 @@ func displayCreateMenu() string {
 }
 
 const (
-	FILENAME   = "books"
-	BACKUP_DIR = "backups"
+	FILENAME = "books"
 )
 
 func lineToDict(line string) (map[string]string, error) {
@@ -447,10 +386,6 @@ func getNextID() (int, error) {
 }
 
 func Create(book Book) string {
-	// бекап
-	if err := createBackup(); err != nil {
-		return fmt.Sprintf("Ошибка при создании бэкапа: %v", err)
-	}
 
 	// следующий ID
 	bookID, err := getNextID()
@@ -700,10 +635,6 @@ func (b *Book) setField(field string, value string) error {
 
 // modifyBooksFile updates or deletes books in the file atomically
 func modifyBooksFile(books []Book, update bool) string {
-	// Create backup first
-	if err := createBackup(); err != nil {
-		return fmt.Sprintf("Ошибка при создании бэкапа: %v", err)
-	}
 
 	tempFilename := "temp_books.txt"
 	found := false
@@ -788,11 +719,6 @@ func modifyBooksFile(books []Book, update bool) string {
 	}
 	if err := os.Rename(tempFilename, FILENAME); err != nil {
 		return fmt.Sprintf("Ошибка переименования временного файла: %v", err)
-	}
-
-	// Cleanup old backups
-	if err := cleanupBackups(); err != nil {
-		log.Printf("Ошибка очистки бэкапов: %v", err)
 	}
 
 	return result.String()
@@ -974,11 +900,6 @@ func Update(book Book) string {
 		return fmt.Sprintf("Книга с ID %s не найдена", book.ID)
 	}
 
-	// Create backup
-	if err := createBackup(); err != nil {
-		return fmt.Sprintf("Ошибка при создании бэкапа: %v", err)
-	}
-
 	// Write all books back to file
 	tempFilename := "temp_books.txt"
 	tempFile, err := os.Create(tempFilename)
@@ -1013,11 +934,6 @@ func Update(book Book) string {
 	}
 	if err := os.Rename(tempFilename, FILENAME); err != nil {
 		return fmt.Sprintf("Ошибка переименования временного файла: %v", err)
-	}
-
-	// Cleanup old backups
-	if err := cleanupBackups(); err != nil {
-		log.Printf("Ошибка очистки бэкапов: %v", err)
 	}
 
 	return fmt.Sprintf("Книга с ID %s успешно обновлена", book.ID)
@@ -1260,7 +1176,6 @@ ID: %s
 				case "0":
 					sendMessage(displayReadMenu())
 				case "1":
-					sendMessage("Вывод всех книг...")
 					books, err := Read()
 					if err != nil {
 						sendMessage("Ошибка при чтении списка книг: " + err.Error())
@@ -1478,15 +1393,24 @@ ID: %s
 					}
 
 					for _, field := range fields {
-						sendMessage(field.prompt + " (Текущее: " + book.getField(field.name) + ")")
-						scanner.Scan()
-						value := strings.TrimSpace(scanner.Text())
-						if value != "" {
+						for {
+							sendMessage(field.prompt + " (Текущее: " + book.getField(field.name) + ")")
+							scanner.Scan()
+							value := strings.TrimSpace(scanner.Text())
+
+							// Если ввод пустой, оставляем текущее значение и переходим к следующему полю
+							if value == "" {
+								break
+							}
+
+							// Проверяем валидность ввода
 							if err := field.validate(value); err != nil {
 								sendMessage("Ошибка валидации: " + err.Error())
-								continue
+								sendMessage("Пожалуйста, введите значение снова")
+								continue // Повторяем запрос этого же поля
 							}
-							// Special handling for authors and genres
+
+							// Обработка специальных полей (authors и genres)
 							if field.name == "authors" {
 								normalized, _ := ValidateAuthors(value)
 								book.Authors = normalized
@@ -1496,6 +1420,7 @@ ID: %s
 							} else {
 								book.setField(field.name, value)
 							}
+							break // Выходим из цикла для этого поля, так как ввод корректен
 						}
 					}
 
