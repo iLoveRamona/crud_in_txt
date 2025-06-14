@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -174,7 +177,7 @@ func ValidateName(name string) error {
 func normalizeCommas(input string) string {
 	// Заменяем " , " или любые пробелы вокруг запятых на ", "
 	re := regexp.MustCompile(`\s*,\s*`)
-	return re.ReplaceAllString(input, ", ")
+	return re.ReplaceAllString(input, ",")
 }
 
 func ValidateAuthors(authors string) (string, error) {
@@ -204,9 +207,131 @@ func ValidateGenres(genres string) (string, error) {
 	return normalized, nil
 }
 
+// createBackup создает бэкап в папке /backups
+func createBackup() error {
+	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
+		return nil // Файла нет - бэкап не нужен
+	}
+
+	// Создаем папку backups если ее нет
+	if err := os.MkdirAll(BACKUP_DIR, 0755); err != nil {
+		return fmt.Errorf("ошибка создания папки бэкапов: %v", err)
+	}
+
+	// Формируем имя файла с timestamp
+	backupName := fmt.Sprintf("%s/%s_%s.bak",
+		BACKUP_DIR,
+		FILENAME,
+		time.Now().Format("20060102_150405"))
+
+	// Читаем исходный файл
+	input, err := os.ReadFile(FILENAME)
+	if err != nil {
+		return fmt.Errorf("ошибка чтения файла для бэкапа: %v", err)
+	}
+
+	// Пишем бэкап
+	err = os.WriteFile(backupName, input, 0644)
+	if err != nil {
+		return fmt.Errorf("ошибка создания бэкапа: %v", err)
+	}
+
+	return nil
+}
+
+// cleanupBackups удаляет старые бэкапы, оставляя последние 5
+func cleanupBackups() error {
+	files, err := os.ReadDir(BACKUP_DIR)
+	if err != nil {
+		return fmt.Errorf("ошибка чтения папки бэкапов: %v", err)
+	}
+
+	// Сортируем по времени изменения (новые сначала)
+	sort.Slice(files, func(i, j int) bool {
+		infoI, _ := files[i].Info()
+		infoJ, _ := files[j].Info()
+		return infoI.ModTime().After(infoJ.ModTime())
+	})
+
+	// Удаляем все кроме 5 последних
+	for i := 5; i < len(files); i++ {
+		err := os.Remove(filepath.Join(BACKUP_DIR, files[i].Name()))
+		if err != nil {
+			return fmt.Errorf("ошибка удаления старого бэкапа: %v", err)
+		}
+	}
+
+	return nil
+}
+
+func isUniqueBook(book Book) (bool, error) {
+	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
+		return true, nil // файла не существует
+	}
+
+	file, err := os.Open(FILENAME)
+	if err != nil {
+		return false, fmt.Errorf("ошибка открытия файла: %v", err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		existingBook, err := lineToDict(line)
+		if err != nil {
+			return false, fmt.Errorf("ошибка парсинга строки: %v", err)
+		}
+
+		if existingBook["name"] == book.Name && existingBook["authors"] == book.Authors {
+			return false, nil
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("ошибка чтения файла: %v", err)
+	}
+
+	return true, nil
+}
+
+func appendBookToFile(book Book) error {
+	file, err := os.OpenFile(FILENAME, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("ошибка открытия файла: %v", err)
+	}
+	defer file.Close()
+
+	line := fmt.Sprintf("%d|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
+		book.ID,
+		book.Name,
+		book.Year,
+		book.Authors,
+		book.Genres,
+		book.Width,
+		book.Height,
+		book.Cover,
+		book.Source,
+		book.Added,
+		book.Read,
+		book.Rating,
+	)
+
+	if _, err := file.WriteString(line); err != nil {
+		return fmt.Errorf("ошибка записи в файл: %v", err)
+	}
+
+	return nil
+}
+
 const port = ":8080"
 
 type Book struct {
+	ID      int
 	Name    string
 	Authors string
 	Genres  string
@@ -246,6 +371,108 @@ func displayCreateMenu() string {
 `
 }
 
+const (
+	FILENAME   = "books"
+	BACKUP_DIR = "backups"
+)
+
+func lineToDict(line string) (map[string]string, error) {
+	parts := strings.Split(strings.TrimSpace(line), "|")
+
+	if len(parts) < 12 {
+		return nil, fmt.Errorf("недостаточно частей в строке (ожидается 12, получено %d)", len(parts))
+	}
+
+	return map[string]string{
+		"id":         parts[0],
+		"name":       parts[1],
+		"year":       parts[2],
+		"authors":    parts[3],
+		"genres":     parts[4],
+		"width":      parts[5],
+		"height":     parts[6],
+		"book_type":  parts[7],
+		"source":     parts[8],
+		"date_added": parts[9],
+		"date_read":  parts[10],
+		"rating":     parts[11],
+	}, nil
+}
+func getNextID() (int, error) {
+	// если файл существует
+	if _, err := os.Stat(FILENAME); os.IsNotExist(err) {
+		return 1, nil
+	}
+
+	// открыть
+	file, err := os.Open(FILENAME)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка открытия файла: %v", err)
+	}
+	defer file.Close()
+
+	// найти последнюю строку
+	scanner := bufio.NewScanner(file)
+	var lastLine string
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" {
+			lastLine = line
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, fmt.Errorf("ошибка чтения файла: %v", err)
+	}
+
+	// если пустой
+	if lastLine == "" {
+		return 1, nil
+	}
+
+	// парсим последнюю
+	book, err := lineToDict(lastLine)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка парсинга строки: %v", err)
+	}
+
+	// if = int
+	id, err := strconv.Atoi(book["id"])
+	if err != nil {
+		return 0, fmt.Errorf("неверный формат ID: %v", err)
+	}
+
+	return id + 1, nil
+}
+
+func Create(book Book) string {
+	// бекап
+	if err := createBackup(); err != nil {
+		return fmt.Sprintf("Ошибка при создании бэкапа: %v", err)
+	}
+
+	// следующий ID
+	bookID, err := getNextID()
+	if err != nil {
+		return fmt.Sprintf("Ошибка при получении ID: %v", err)
+	}
+	book.ID = bookID
+
+	// Проверка на уникальность
+	if isUnique, err := isUniqueBook(book); err != nil {
+		return fmt.Sprintf("Ошибка проверки уникальности: %v", err)
+	} else if !isUnique {
+		return fmt.Sprintf("Книга уже добавлена: %s, написанная %s", book.Name, book.Authors)
+	}
+
+	// Добавить в файл
+	if err := appendBookToFile(book); err != nil {
+		return fmt.Sprintf("Ошибка при записи в файл: %v", err)
+	}
+
+	return fmt.Sprintf("Добавлена книга: %s (ID: %d)", book.Name, bookID)
+
+}
 func displayReadMenu() string {
 	return `
  ---------------
@@ -513,8 +740,9 @@ func handleClient(conn net.Conn) {
 					}
 
 					// Confirm addition
-					sendMessage("Добавить книгу? (д/н):")
+
 					sendMessage(fmt.Sprintf(`
+ID: %d
 Название: %s
 Авторы: %s
 Жанры: %s
@@ -525,15 +753,16 @@ func handleClient(conn net.Conn) {
 Дата добавления: %s
 Дата прочтения: %s
 Рейтинг: %s
-`, book.Name, book.Authors, book.Genres, book.Year, book.Width, book.Height,
+`, book.ID, book.Name, book.Authors, book.Genres, book.Year, book.Width, book.Height,
 						book.Cover, book.Source, book.Added, book.Read, book.Rating))
-
+					sendMessage("Добавить книгу? (д/н):")
 					for scanner.Scan() {
 						confirm := strings.ToLower(strings.TrimSpace(scanner.Text()))
 						log.Printf("%s прислал: %s", remoteAddr, confirm)
 						if confirm == "д" || confirm == "y" {
 							// Here you would typically save the book to your storage
 							sendMessage("Добавление книги... ")
+							Create(book)
 							sendMessage("Книга добавлена. Отправьте '0' для возвращения в меню")
 							break
 						} else if confirm == "н" || confirm == "n" {
